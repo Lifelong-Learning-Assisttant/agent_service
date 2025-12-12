@@ -27,17 +27,18 @@ class LangchainAgentService:
         # Agent: Zero-shot REACT (reasoning + tools)
         with open('prompts/agent_prompt.txt', 'r', encoding='utf-8') as file:
             prompt_template = file.read()
-              
+               
         prompt = PromptTemplate.from_template(prompt_template)
         self.agent = create_react_agent(self.llm, self.tools, prompt)
+        self.agent_executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=verbose, handle_parsing_errors=True)
 
-    def run(self, prompt: str) -> str:
+    def run(self, prompt: dict) -> str:
         """
         Выполнить агент, получить финальный ответ (строка).
         (AgentExecutor.run обычно синхронен.)
         """
         try:
-            return self.agent.invoke(prompt)
+            return self.agent_executor.invoke(prompt)
         except Exception as e:
             log.exception("Agent run error")
             # возвращаем понятную строку, чтобы UI не крашился
