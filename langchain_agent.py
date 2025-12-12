@@ -24,8 +24,8 @@ class LangchainAgentService:
         prov = provider or settings.default_provider
         self.client = LLMClient(provider=prov)
         self.llm = LLMClientWrapper(self.client, temperature=temperature)
-        # self.tools = make_tools()  # Закомментировано для тестирования
-        self.tools = []  # Пустой список инструментов
+        self.tools = make_tools()  # Включаем инструменты
+        # self.tools = []  # Пустой список инструментов
         # Agent: Zero-shot REACT (reasoning + tools)
         # with open('prompts/agent_prompt.txt', 'r', encoding='utf-8') as file:
         #     prompt_template = file.read()

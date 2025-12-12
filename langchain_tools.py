@@ -27,6 +27,7 @@ def context7_sync(query: str) -> str:
         log.warning("Context7 not configured; returning mock")
         return f"(Context7 mock) {query[:300]}"
     try:
+        log.info(f"Using Context7 tool with query: {query}")
         data = _post_json(str(url), {"q": query}, timeout=settings.http_timeout_s)
         if isinstance(data, dict):
             if data.get("summary"):
@@ -53,6 +54,7 @@ def tavily_sync(query: str) -> str:
         log.warning("Tavily not configured; returning mock")
         return f"(Tavily mock) {query[:300]}"
     try:
+        log.info(f"Using Tavily tool with query: {query}")
         data = _post_json(str(url), {"query": query}, timeout=settings.http_timeout_s)
         if isinstance(data, dict) and data.get("results"):
             res = data.get("results")[:3]
