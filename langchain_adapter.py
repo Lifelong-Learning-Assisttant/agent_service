@@ -1,6 +1,6 @@
 # agent_service/langchain_adapter.py
 from typing import Optional, List, Mapping, Any
-from langchain.llms.base import LLM
+from langchain_core.language_models.llms import LLM
 from llm_service.llm_client import LLMClient
 
 
@@ -10,9 +10,11 @@ class LLMClientWrapper(LLM):
     LangChain вызывает _call, мы делегируем в LLMClient.generate.
     """
 
+    client: LLMClient
+    temperature: float = 0.2
+
     def __init__(self, client: LLMClient, temperature: float = 0.2):
-        self.client = client
-        self.temperature = temperature
+        super().__init__(client=client, temperature=temperature)
 
     @property
     def _llm_type(self) -> str:

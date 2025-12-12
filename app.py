@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 
-from agent_service.langchain_agent import LangchainAgentService
-from agent_service.config import get_settings
+from langchain_agent import LangchainAgentService
+from settings import get_settings
 
 log = logging.getLogger("agent_service")
 logging.basicConfig(level=logging.INFO)

@@ -1,5 +1,7 @@
 # secrets
 .env
+.repomix
+repomix-*
 
 # Python-generated files
 __pycache__/

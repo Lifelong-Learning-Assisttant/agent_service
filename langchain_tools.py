@@ -3,8 +3,8 @@ from typing import Dict, Any
 import httpx
 import logging
 
-from langchain.tools import Tool
-from agent_service.config import get_settings
+from langchain_core.tools import Tool
+from settings import get_settings
 
 log = logging.getLogger(__name__)
 settings = get_settings()
@@ -22,11 +22,12 @@ def _post_json(url: str, payload: Dict[str, Any], timeout: int):
 
 def context7_sync(query: str) -> str:
     """Синхронная обёртка для Context7 MCP."""
-    if not settings.CONTEXT7_URL:
+    url = getattr(settings, "context7_url", None)
+    if not url:
         log.warning("Context7 not configured; returning mock")
         return f"(Context7 mock) {query[:300]}"
     try:
-        data = _post_json(str(settings.CONTEXT7_URL), {"q": query}, timeout=settings.HTTP_TIMEOUT_S)
+        data = _post_json(str(url), {"q": query}, timeout=getattr(settings, "http_timeout_s", 60.0))
         if isinstance(data, dict):
             if data.get("summary"):
                 return f"(Context7) {data['summary']}"
@@ -47,11 +48,12 @@ def context7_sync(query: str) -> str:
 
 def tavily_sync(query: str) -> str:
     """Синхронная обёртка для Tavily search MCP."""
-    if not settings.TAVILY_URL:
+    url = getattr(settings, "tavily_url", None)
+    if not url:
         log.warning("Tavily not configured; returning mock")
         return f"(Tavily mock) {query[:300]}"
     try:
-        data = _post_json(str(settings.TAVILY_URL), {"query": query}, timeout=settings.HTTP_TIMEOUT_S)
+        data = _post_json(str(url), {"query": query}, timeout=getattr(settings, "http_timeout_s", 60.0))
         if isinstance(data, dict) and data.get("results"):
             res = data.get("results")[:3]
             return "(Tavily)\n\n" + "\n\n".join([r.get("snippet") if isinstance(r, dict) else str(r) for r in res])

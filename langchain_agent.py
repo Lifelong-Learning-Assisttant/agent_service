@@ -2,12 +2,12 @@
 from typing import Optional
 import logging
 
-from langchain.agents import initialize_agent, AgentType
-from langchain.tools import Tool
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_core.prompts import PromptTemplate
 from llm_service.llm_client import LLMClient
-from agent_service.langchain_adapter import LLMClientWrapper
-from agent_service.langchain_tools import make_tools
-from agent_service.config import get_settings
+from langchain_adapter import LLMClientWrapper
+from langchain_tools import make_tools
+from settings import get_settings
 
 log = logging.getLogger(__name__)
 settings = get_settings()
@@ -25,7 +25,11 @@ class LangchainAgentService:
         self.llm = LLMClientWrapper(self.client, temperature=temperature)
         self.tools = make_tools()
         # Agent: Zero-shot REACT (reasoning + tools)
-        self.agent = initialize_agent(self.tools, self.llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=verbose)
+        with open('prompts/agent_prompt.txt', 'r', encoding='utf-8') as file:
+            prompt_template = file.read()
+              
+        prompt = PromptTemplate.from_template(prompt_template)
+        self.agent = create_react_agent(self.llm, self.tools, prompt)
 
     def run(self, prompt: str) -> str:
         """
@@ -33,7 +37,7 @@ class LangchainAgentService:
         (AgentExecutor.run обычно синхронен.)
         """
         try:
-            return self.agent.run(prompt)
+            return self.agent.invoke(prompt)
         except Exception as e:
             log.exception("Agent run error")
             # возвращаем понятную строку, чтобы UI не крашился
