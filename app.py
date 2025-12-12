@@ -34,8 +34,8 @@ def handle_message(payload: MessageIn):
     # Если пользователь указал provider — можно создать отдельный агент на лету.
     if payload.provider and payload.provider != settings.default_provider:
         local_agent = LangchainAgentService(provider=payload.provider, temperature=0.2, verbose=False)
-        answer = local_agent.run({"input": payload.message})
+        answer = local_agent.run(payload.message)
     else:
-        answer = AGENT_SERVICE.run({"input": payload.message})
+        answer = AGENT_SERVICE.run(payload.message)
 
     return MessageOut(answer=answer)

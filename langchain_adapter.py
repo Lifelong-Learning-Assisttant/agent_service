@@ -1,6 +1,6 @@
 # agent_service/langchain_adapter.py
 from typing import Optional, List, Mapping, Any
-from langchain_core.language_models.llms import LLM
+from langchain.llms.base import LLM
 from llm_service.llm_client import LLMClient
 
 
@@ -13,8 +13,9 @@ class LLMClientWrapper(LLM):
     client: LLMClient
     temperature: float = 0.2
 
-    def __init__(self, client: LLMClient, temperature: float = 0.2):
-        super().__init__(client=client, temperature=temperature)
+    def __init__(self, client: LLMClient, temperature: float = 0.2, **kwargs):
+        # Инициализируем через базовый Pydantic-конструктор
+        super().__init__(client=client, temperature=temperature, **kwargs)
 
     @property
     def _llm_type(self) -> str:
@@ -25,5 +26,6 @@ class LLMClientWrapper(LLM):
         out = self.client.generate([prompt], temperature=self.temperature)[0]
         return out or ""
 
+    @property
     def _identifying_params(self) -> Mapping[str, Any]:
         return {"provider": getattr(self.client, "provider", None), "temperature": self.temperature}

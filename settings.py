@@ -1,8 +1,19 @@
 from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, Field
+import json
+import os
 
 ProviderName = Literal["openai", "openrouter", "mistral"]
+
+
+def load_app_settings():
+    """Загружает настройки из app_settings.json."""
+    app_settings_path = os.path.join(os.path.dirname(__file__), "app_settings.json")
+    if os.path.exists(app_settings_path):
+        with open(app_settings_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 
 class LLMSettings(BaseSettings):
@@ -56,6 +67,17 @@ class LLMSettings(BaseSettings):
     mistral_chat_model: str = Field(default="mistral-large-latest")
     mistral_emb_model: str = Field(default="mistral-embed")
     mistral_api_key: SecretStr | None = Field(default=None)
+
+    def __init__(self, **kwargs):
+        """Инициализирует настройки, загружая значения из app_settings.json."""
+        app_settings = load_app_settings()
+        
+        # Применяем настройки из app_settings.json, если они есть
+        for key, value in app_settings.items():
+            if hasattr(self, key):
+                kwargs.setdefault(key, value)
+        
+        super().__init__(**kwargs)
 
 
 def get_settings() -> LLMSettings:

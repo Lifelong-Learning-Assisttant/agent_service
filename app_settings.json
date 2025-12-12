@@ -1,0 +1,13 @@
+{
+  "default_provider": "openrouter",
+  "openrouter_chat_model": "kwaipilot/kat-coder-pro:free",
+  "openrouter_base_url": "https://openrouter.ai/api/v1",
+  "request_timeout_s": 60.0,
+  "connect_timeout_s": 10.0,
+  "max_retries": 5,
+  "retry_base_s": 1.0,
+  "retry_max_s": 20.0,
+  "retry_jitter_s": 0.5,
+  "emb_batch_size": 64,
+  "log_level": "INFO"
+}

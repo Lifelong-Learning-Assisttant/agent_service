@@ -3,7 +3,7 @@ from typing import Dict, Any
 import httpx
 import logging
 
-from langchain_core.tools import Tool
+from langchain.tools import Tool
 from settings import get_settings
 
 log = logging.getLogger(__name__)
