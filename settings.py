@@ -56,12 +56,12 @@ class LLMSettings(BaseSettings):
 
     # ---- External MCPs & App-level settings ----
     # (URLs можно задавать через переменные окружения CONTEXT7_URL, TAVILY_URL)
-    context7_url: str | None = Field(default=None, env="CONTEXT7_URL")
-    tavily_url: str | None = Field(default=None, env="TAVILY_URL")
-    http_timeout_s: float = Field(default=60.0, env="HTTP_TIMEOUT_S")
+    context7_url: str | None = Field(default=None)
+    tavily_url: str | None = Field(default=None)
+    http_timeout_s: float = Field(default=60.0)
 
     # Батч для эмбеддингов
-    emb_batch_size: int = 64
+    emb_batch_size: int = Field(default=64)
 
     # ---- Mistral ----
     mistral_chat_model: str = Field(default="mistral-large-latest")
@@ -70,14 +70,18 @@ class LLMSettings(BaseSettings):
 
     def __init__(self, **kwargs):
         """Инициализирует настройки, загружая значения из app_settings.json."""
+        super().__init__(**kwargs)
+        
         app_settings = load_app_settings()
         
-        # Применяем настройки из app_settings.json, если они есть
+        # Применяем настройки из app_settings.json после инициализации
+        # Это гарантирует, что настройки из app_settings.json перепишут дефолтные значения
         for key, value in app_settings.items():
             if hasattr(self, key):
-                kwargs.setdefault(key, value)
-        
-        super().__init__(**kwargs)
+                current_value = getattr(self, key)
+                field_info = self.__class__.model_fields.get(key)
+                if field_info and current_value == field_info.default:
+                    setattr(self, key, value)
 
 
 def get_settings() -> LLMSettings:
@@ -94,15 +98,26 @@ if __name__ == "__main__":
 
     print("=== LLMSettings mini-test ===")
     s = get_settings()
-    print("default_provider:", s.default_provider)
-    print("openai_chat_model:", s.openai_chat_model)
-    print("openrouter_base_url:", s.openrouter_base_url)
-
-    print("has OPENAI key?:", bool(s.openai_api_key and s.openai_api_key.get_secret_value()))
-    print("has OPENROUTER key?:", bool(s.openrouter_api_key and s.openrouter_api_key.get_secret_value()))
-    print("has MISTRAL key?:", bool(s.mistral_api_key and s.mistral_api_key.get_secret_value()))
-
-    # env переопределяет дефолт
-    os.environ["LLM_OPENAI_CHAT_MODEL"] = "gpt-4o-mini-2025"
-    s2 = get_settings()
-    print("override openai_chat_model:", s2.openai_chat_model)
+    
+    # Выводим информацию только о тех провайдерах, для которых есть API ключ
+    providers_with_keys = []
+    if s.openai_api_key and s.openai_api_key.get_secret_value():
+        providers_with_keys.append("openai")
+        print("OpenAI provider:")
+        print("  - chat_model:", s.openai_chat_model)
+        print("  - base_url:", s.openai_base_url)
+    
+    if s.openrouter_api_key and s.openrouter_api_key.get_secret_value():
+        providers_with_keys.append("openrouter")
+        print("OpenRouter provider:")
+        print("  - chat_model:", s.openrouter_chat_model)
+        print("  - base_url:", s.openrouter_base_url)
+    
+    if s.mistral_api_key and s.mistral_api_key.get_secret_value():
+        providers_with_keys.append("mistral")
+        print("Mistral provider:")
+        print("  - chat_model:", s.mistral_chat_model)
+        print("  - base_url:", s.mistral_base_url)
+    
+    print("\nDefault provider:", s.default_provider)
+    print("Available providers with API keys:", providers_with_keys)

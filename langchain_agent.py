@@ -3,6 +3,7 @@ from typing import Optional
 import logging
 
 from langchain.agents import AgentExecutor, create_react_agent
+from langchain.agents.agent import Agent
 from langchain.prompts import PromptTemplate
 from llm_service.llm_client import LLMClient
 from langchain_adapter import LLMClientWrapper
@@ -23,14 +24,28 @@ class LangchainAgentService:
         prov = provider or settings.default_provider
         self.client = LLMClient(provider=prov)
         self.llm = LLMClientWrapper(self.client, temperature=temperature)
-        self.tools = make_tools()
+        # self.tools = make_tools()  # Закомментировано для тестирования
+        self.tools = []  # Пустой список инструментов
         # Agent: Zero-shot REACT (reasoning + tools)
-        with open('prompts/agent_prompt.txt', 'r', encoding='utf-8') as file:
+        # with open('prompts/agent_prompt.txt', 'r', encoding='utf-8') as file:
+        #     prompt_template = file.read()
+        #
+        # prompt = PromptTemplate.from_template(prompt_template)
+        
+        # Используем простой промпт
+        with open('prompts/simple_prompt.txt', 'r', encoding='utf-8') as file:
             prompt_template = file.read()
-                
+                  
         prompt = PromptTemplate.from_template(prompt_template)
         self.agent = create_react_agent(self.llm, self.tools, prompt)
-        self.agent_executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=verbose, handle_parsing_errors=True)
+        self.agent_executor = AgentExecutor(
+            agent=self.agent,
+            tools=self.tools,
+            verbose=verbose,
+            handle_parsing_errors=True,
+            max_iterations=50,  # Увеличиваем лимит итераций
+            max_execution_time=None  # Убираем лимит по времени
+        )
 
     def run(self, prompt: str | dict) -> str:
         """
