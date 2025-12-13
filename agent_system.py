@@ -1,12 +1,13 @@
-from typing import Dict, Optional, TypedDict, Literal
+from typing import Dict, Optional, TypedDict, Literal, List
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage
 
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import addition_service, make_tools
+from langchain_tools import addition_service, make_tools, rag_search
 
 
 # ---------- Состояние графа ----------
@@ -14,9 +15,11 @@ class AgentState(TypedDict, total=False):
     """Общее состояние исполнения графа."""
 
     question: str
-    route: Literal["direct", "tools"]
-    answer: str
-    meta: Dict[str, str]
+    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"]
+    documents: List[str]
+    quiz_content: Optional[str]
+    user_solution: Optional[str]
+    final_answer: str
 
 
 # ---------- Агентная система ----------
@@ -47,38 +50,53 @@ class AgentSystem:
         self.tool_names = [tool.name for tool in self.tools]
         self.log.info("Available tools: %s", self.tool_names)
 
+        # Инициализируем память для графа
+        self.memory = MemorySaver()
+
         self.app = self._build_graph()
 
     # ---------- Узлы графа ----------
-    def router(self, state: AgentState) -> AgentState:
+    def planner_node(self, state: AgentState) -> AgentState:
         """
-        Классифицирует запрос: direct | tools и возвращает обновлённый state.
+        Анализирует запрос и определяет план действий (intent).
         """
         import time
 
         q = (state.get("question") or "").strip()
-        self.log.info("start:router | question_len=%d", len(q))
+        self.log.info("start:planner | question_len=%d", len(q))
         t0 = time.perf_counter()
 
-        # Сначала проверяем, нужно ли использовать инструменты
-        if self._should_use_tools(q):
-            route: Literal["direct", "tools"] = "tools"
-            self.log.info("Router detected tool usage requirement")
-        else:
-            # Используем LLM для маршрутизации между direct
-            route = "direct"
-        dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:router | route=%s | %.1f ms", route, dt)
-        return {**state, "route": route}
+        # Определяем намерение на основе запроса
+        intent = self._determine_intent(q)
 
-    def answer_direct(self, state: AgentState) -> AgentState:
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:planner | intent=%s | %.1f ms", intent, dt)
+        return {**state, "intent": intent}
+
+    def retrieve_node(self, state: AgentState) -> AgentState:
         """
-        Прямой ответ через LLM без инструментов.
+        Ищет документы в RAG.
         """
         import time
 
         q = (state.get("question") or "").strip()
-        self.log.info("start:answer_direct | q_len=%d", len(q))
+        self.log.info("start:retrieve | q_len=%d", len(q))
+        t0 = time.perf_counter()
+
+        docs = rag_search(q)
+
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:retrieve | docs_count=%d | %.1f ms", len(docs), dt)
+        return {**state, "documents": docs}
+
+    def direct_answer_node(self, state: AgentState) -> AgentState:
+        """
+        Отвечает без инструментов (болтовня).
+        """
+        import time
+
+        q = (state.get("question") or "").strip()
+        self.log.info("start:direct_answer | q_len=%d", len(q))
         t0 = time.perf_counter()
 
         prompt = (
@@ -88,127 +106,99 @@ class AgentSystem:
         answer = self.client.generate([prompt], temperature=0.2)[0]
 
         dt = (time.perf_counter() - t0) * 1000
-        self.log.info(
-            "done:answer_direct | out_len=%d | %.1f ms", len(answer or ""), dt
-        )
-        return {**state, "answer": answer}
+        self.log.info("done:direct_answer | out_len=%d | %.1f ms", len(answer or ""), dt)
+        return {**state, "final_answer": answer}
 
-    def answer_with_tools(self, state: AgentState) -> AgentState:
+    def rag_answer_node(self, state: AgentState) -> AgentState:
         """
-        Отвечает на вопрос, используя доступные инструменты.
+        Генерирует ответ на основе документов.
         """
         import time
-        import re
 
         q = (state.get("question") or "").strip()
-        self.log.info("start:answer_with_tools | q_len=%d", len(q))
+        self.log.info("start:rag_answer | q_len=%d", len(q))
         t0 = time.perf_counter()
 
-        # Проверяем, нужно ли использовать инструмент сложения
-        if "addition_service" in q.lower() or "инструмент сложения" in q.lower():
-            # Извлекаем числа из вопроса
-            numbers = re.findall(r"\d+\.?\d*", q)
-            if len(numbers) >= 2:
-                try:
-                    a = float(numbers[0])
-                    b = float(numbers[1])
+        context = "\n".join(state.get("documents", []))
+        prompt = f"Context: {context}. Question: {q}"
+        answer = self.client.generate([prompt], temperature=0.2)[0]
 
-                    self.log.info(f"Using addition_service with a={a}, b={b}")
-                    result = addition_service(a, b)
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:rag_answer | out_len=%d | %.1f ms", len(answer or ""), dt)
+        return {**state, "final_answer": answer}
 
-                    answer = (
-                        f"Используя инструмент addition_service: {a} + {b} = {result}"
-                    )
-                    self.log.info(f"Tool result: {answer}")
+    def create_quiz_node(self, state: AgentState) -> AgentState:
+        """
+        Создает квиз на основе документов.
+        """
+        import time
 
-                    dt = (time.perf_counter() - t0) * 1000
-                    self.log.info(
-                        "done:answer_with_tools | out_len=%d | %.1f ms",
-                        len(answer or ""),
-                        dt,
-                    )
-                    return {**state, "answer": answer}
-                except Exception as e:
-                    self.log.error(f"Tool execution failed: {e}")
-                    answer = f"Ошибка при использовании инструмента: {str(e)}"
+        q = (state.get("question") or "").strip()
+        self.log.info("start:create_quiz | q_len=%d", len(q))
+        t0 = time.perf_counter()
 
-        # Проверяем, нужно ли использовать инструмент поиска RAG
-        if "rag_search" in q.lower() or "поиск документов" in q.lower():
-            try:
-                from langchain_tools import rag_search
-                
-                self.log.info(f"Using rag_search tool for query: {q}")
-                result = rag_search(q)
-                
-                answer = (
-                    f"Результаты поиска через RAG:\n{result}"
-                )
-                self.log.info(f"RAG search result: {answer}")
+        context = "\n".join(state.get("documents", []))
+        prompt = f"Make a quiz based on: {context}"
+        quiz = self.client.generate([prompt], temperature=0.7)[0]
 
-                dt = (time.perf_counter() - t0) * 1000
-                self.log.info(
-                    "done:answer_with_tools | out_len=%d | %.1f ms",
-                    len(answer or ""),
-                    dt,
-                )
-                return {**state, "answer": answer}
-            except Exception as e:
-                self.log.error(f"RAG search tool execution failed: {e}")
-                answer = f"Ошибка при поиске через RAG: {str(e)}"
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:create_quiz | quiz_len=%d | %.1f ms", len(quiz or ""), dt)
+        return {**state, "quiz_content": quiz, "final_answer": quiz}
 
-        # Проверяем, нужно ли использовать инструмент генерации RAG
-        if "rag_generate" in q.lower() or "сгенерировать ответ" in q.lower():
-            try:
-                from langchain_tools import rag_generate
-                
-                self.log.info(f"Using rag_generate tool for query: {q}")
-                result = rag_generate(q)
-                
-                answer = (
-                    f"Сгенерированный ответ через RAG:\n{result}"
-                )
-                self.log.info(f"RAG generate result: {answer}")
+    def evaluate_quiz_node(self, state: AgentState) -> AgentState:
+        """
+        Оценивает решение пользователя.
+        """
+        import time
 
-                dt = (time.perf_counter() - t0) * 1000
-                self.log.info(
-                    "done:answer_with_tools | out_len=%d | %.1f ms",
-                    len(answer or ""),
-                    dt,
-                )
-                return {**state, "answer": answer}
-            except Exception as e:
-                self.log.error(f"RAG generate tool execution failed: {e}")
-                answer = f"Ошибка при генерации через RAG: {str(e)}"
+        q = (state.get("question") or "").strip()
+        self.log.info("start:evaluate_quiz | q_len=%d", len(q))
+        t0 = time.perf_counter()
 
-        # Если инструмент не нужен, используем стандартный ответ
-        answer = self.answer_direct(state).get("answer", "")
-        return {**state, "answer": answer}
+        # Получаем квиз и ответ пользователя
+        quiz_content = state.get("quiz_content", "")
+        user_solution = q
+
+        # Оцениваем ответ
+        prompt = f"Quiz: {quiz_content}\nUser Answer: {user_solution}\nEvaluate the answer."
+        feedback = self.client.generate([prompt], temperature=0.3)[0]
+
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:evaluate_quiz | feedback_len=%d | %.1f ms", len(feedback or ""), dt)
+        return {**state, "final_answer": feedback}
 
     # ---------- Ветвление ----------
     @staticmethod
-    def _route_edge(state: AgentState) -> str:
-        """Возвращает имя следующего узла по значению route."""
-        route = state.get("route", "direct")
-        return {
-            "direct": "answer_direct",
-            "tools": "answer_with_tools",
-        }.get(route, "answer_direct")
+    def route_after_planner(state: AgentState) -> str:
+        """Решает, куда идти после планирования."""
+        intent = state.get("intent", "general")
+        if intent == "general":
+            return "direct_answer"
+        elif intent == "evaluate_quiz":
+            return "evaluate_quiz"
+        else:
+            return "retrieve"
 
-    def _should_use_tools(self, question: str) -> bool:
-        """Определяет, нужно ли использовать инструменты."""
+    @staticmethod
+    def route_after_retriever(state: AgentState) -> str:
+        """Решает, что делать с полученными данными."""
+        intent = state.get("intent", "general")
+        if intent == "generate_quiz":
+            return "create_quiz"
+        else:
+            return "rag_answer"
+
+    def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
+        """Определяет намерение пользователя."""
         question_lower = question.lower()
-        # Проверяем явное упоминание инструментов
-        if any(
-            tool in question_lower
-            for tool in ["addition_service", "инструмент сложения", "rag_search", "поиск документов", "rag_generate", "сгенерировать ответ"]
-        ):
-            return True
-        # Проверяем математические выражения
-        if "+" in question and (
-            "сколько" in question_lower or "посчитай" in question_lower
-        ):
-            return True
-        return False
+        if "квиз" in question_lower and "решение" in question_lower():
+            return "evaluate_quiz"
+        elif "квиз" in question_lower:
+            return "generate_quiz"
+        elif "rag" in question_lower or "поиск" in question_lower:
+            return "rag_answer"
+        else:
+            return "general"
 
     # ---------- Сборка графа ----------
     def _build_graph(self):
@@ -219,25 +209,47 @@ class AgentSystem:
         """
         self.log.debug("build_graph: begin")
         builder = StateGraph(AgentState)
-        builder.add_node("router", self.router)
-        builder.add_node("answer_direct", self.answer_direct)
-        builder.add_node("answer_with_tools", self.answer_with_tools)
+        builder.add_node("planner", self.planner_node)
+        builder.add_node("retrieve", self.retrieve_node)
+        builder.add_node("direct_answer", self.direct_answer_node)
+        builder.add_node("rag_answer", self.rag_answer_node)
+        builder.add_node("create_quiz", self.create_quiz_node)
+        builder.add_node("evaluate_quiz", self.evaluate_quiz_node)
 
-        builder.add_edge(START, "router")
-        builder.add_conditional_edges("router", self._route_edge)
-        builder.add_edge("answer_direct", END)
-        builder.add_edge("answer_with_tools", END)
+        builder.add_edge(START, "planner")
+        builder.add_conditional_edges(
+            "planner",
+            self.route_after_planner,
+            {
+                "direct_answer": "direct_answer",
+                "retrieve": "retrieve",
+                "evaluate_quiz": "evaluate_quiz"
+            }
+        )
+        builder.add_conditional_edges(
+            "retrieve",
+            self.route_after_retriever,
+            {
+                "rag_answer": "rag_answer",
+                "create_quiz": "create_quiz"
+            }
+        )
+        builder.add_edge("direct_answer", END)
+        builder.add_edge("rag_answer", END)
+        builder.add_edge("create_quiz", END)
+        builder.add_edge("evaluate_quiz", END)
 
-        app = builder.compile()
+        app = builder.compile(checkpointer=self.memory)
         self.log.debug("build_graph: done")
         return app
 
     # ---------- Публичный вызов ----------
-    def run(self, question: str) -> str:
+    def run(self, question: str, session_id: str = "default") -> str:
         """
         Запускает граф на один вопрос.
         Args:
             question: Вопрос пользователя.
+            session_id: Идентификатор сессии для управления памятью графа.
         Returns:
             Финальный ответ строкой.
         """
@@ -245,8 +257,9 @@ class AgentSystem:
 
         self.log.info("run: start | q_len=%d", len(question or ""))
         t0 = time.perf_counter()
-        final_state: AgentState = self.app.invoke({"question": question})
-        answer = final_state.get("answer", "")
+        config = {"configurable": {"thread_id": session_id}}
+        final_state: AgentState = self.app.invoke({"question": question}, config=config)
+        answer = final_state.get("final_answer", "")
         dt = (time.perf_counter() - t0) * 1000
         self.log.info("run: done  | out_len=%d | %.1f ms", len(answer or ""), dt)
 
