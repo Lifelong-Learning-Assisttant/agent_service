@@ -11,5 +11,6 @@
   "emb_batch_size": 64,
   "log_level": "INFO",
   "addition_service_url": "http://addition_service:8000",
-  "rag_service_url": "http://rag-api:8000"
+  "rag_service_url": "http://rag-api:8000",
+  "test_generator_service_url": "http://llm-tester-api:52812"
 }

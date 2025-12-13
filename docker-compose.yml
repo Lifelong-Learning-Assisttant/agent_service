@@ -16,8 +16,12 @@ services:
     networks:
       - default
       - rag_network
+      - test_generator_network
 
 networks:
   rag_network:
     external: true
     name: rag_rag_network
+  test_generator_network:
+    external: true
+    name: llm_tester_default
