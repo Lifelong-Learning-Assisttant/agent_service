@@ -1,12 +1,28 @@
 version: "3.8"
 
 services:
-  agent:
-    build: .
-    container_name: llm-agent
+  agent_service:
+    image: agent_service:latest
+    container_name: agent_service
+    working_dir: /app
+    volumes:
+      - ./:/app
     ports:
       - "8099:8000"
-    env_file:
-      - .env
-    restart: unless-stopped
-    depends_on: []
+    environment:
+      - TAVILY_URL=http://tavily_server:8000
+      - CONTEXT7_URL=http://context7_server:8000
+      - CONTEXT7_API_KEY=${CONTEXT7_API_KEY}
+    networks:
+      - tavily_search_tool_tavily_network
+      - context7_service_context7_network
+    command: ["tail", "-f", "/dev/null"]
+    external_links:
+      - tavily_server
+      - context7_server
+
+networks:
+  tavily_search_tool_tavily_network:
+    external: true
+  context7_service_context7_network:
+    external: true

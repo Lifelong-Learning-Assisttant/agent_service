@@ -3,7 +3,7 @@ name = "agent-service"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.124.4",
     "langchain>=0.1.0,<0.2.0",
@@ -14,4 +14,5 @@ dependencies = [
     "langchain-mistralai==0.1.0",
     "langchain-openai>=0.0.1,<0.1.0",
     "pydantic-settings>=2.0.0",
+    "httpx",
 ]

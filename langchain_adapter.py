@@ -1,31 +1,33 @@
 # agent_service/langchain_adapter.py
-from typing import Optional, List, Mapping, Any
-from langchain.llms.base import LLM
+from typing import Optional, List, Mapping, Any, Union
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from llm_service.llm_client import LLMClient
 
 
-class LLMClientWrapper(LLM):
+class LLMClientWrapper:
     """
     Лёгкий адаптер LangChain -> ваш LLMClient.
-    LangChain вызывает _call, мы делегируем в LLMClient.generate.
+    Поддерживает bind_tools для вызова инструментов.
     """
 
-    client: LLMClient
-    temperature: float = 0.2
-
     def __init__(self, client: LLMClient, temperature: float = 0.2, **kwargs):
-        # Инициализируем через базовый Pydantic-конструктор
-        super().__init__(client=client, temperature=temperature, **kwargs)
+        self.client = client
+        self.temperature = temperature
+        self._tools = None
 
-    @property
-    def _llm_type(self) -> str:
-        return "custom_llm_client"
-
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+    def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs) -> Union[str, BaseMessage]:
+        # Преобразуем сообщения в строку для LLMClient
+        prompt = "\n".join([
+            f"{msg.type if hasattr(msg, 'type') else 'Human'}: {msg.content}"
+            for msg in messages
+        ])
         # generate возвращает список строк
         out = self.client.generate([prompt], temperature=self.temperature)[0]
-        return out or ""
+        return AIMessage(content=out or "")
 
-    @property
-    def _identifying_params(self) -> Mapping[str, Any]:
-        return {"provider": getattr(self.client, "provider", None), "temperature": self.temperature}
+    def bind_tools(self, tools: List[BaseTool], **kwargs) -> "LLMClientWrapper":
+        """Привязываем инструменты к модели."""
+        self._tools = tools
+        return self
