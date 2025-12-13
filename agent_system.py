@@ -189,14 +189,21 @@ class AgentSystem:
             return "rag_answer"
 
     def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
-        """Определяет намерение пользователя."""
-        question_lower = question.lower()
-        if "квиз" in question_lower and "решение" in question_lower():
-            return "evaluate_quiz"
-        elif "квиз" in question_lower:
-            return "generate_quiz"
-        elif "rag" in question_lower or "поиск" in question_lower:
-            return "rag_answer"
+        """Определяет намерение пользователя с использованием LLM."""
+        prompt = (
+            "Определи намерение пользователя. Возможные варианты:\n"
+            "1. general - если пользователь хочет просто поговорить или задать общий вопрос.\n"
+            "2. rag_answer - если пользователь хочет получить ответ на основе учебника Яндекса по машинному обучению.\n"
+            "3. generate_quiz - если пользователь хочет пройти квиз на основе учебника Яндекса.\n"
+            "4. evaluate_quiz - если пользователь хочет оценить результаты прохождения квиза. результаты прохождения берем из памяти\n"
+            f"Вопрос: {question}\n"
+            "Выбери наиболее подходящий вариант: general, rag_answer, generate_quiz или evaluate_quiz."
+        )
+        intent = self.client.generate([prompt], temperature=0.1)[0].strip().lower()
+        
+        # Приводим к правильному типу
+        if intent in ["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
+            return intent
         else:
             return "general"
 
