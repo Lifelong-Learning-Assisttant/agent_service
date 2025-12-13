@@ -11,8 +11,13 @@ services:
       - "8099:8000"
     environment:
       - ADDITION_SERVICE_URL=http://addition_service:8000
-      - RAG_SERVICE_URL=http://rag:8000
+      - RAG_SERVICE_URL=http://rag-api:8000
     command: ["tail", "-f", "/dev/null"]
-    external_links:
-      - addition_service
-      - rag
+    networks:
+      - default
+      - rag_network
+
+networks:
+  rag_network:
+    external: true
+    name: rag_rag_network
