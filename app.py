@@ -1,45 +1,68 @@
-# agent_service/app.py  -- обновлённый кусок
+#!/usr/bin/env python3
+"""
+FastAPI приложение для агента.
+"""
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import logging
 
-from llm_service.llm_client import LLMClient
-from settings import get_settings
+from agent_system import AgentSystem
 
-log = logging.getLogger("agent_service")
-logging.basicConfig(level=logging.INFO)
+# Создание приложения FastAPI
+app = FastAPI()
 
-app = FastAPI(title="LLM Agent with LangChain AgentExecutor")
-settings = get_settings()
+# Инициализация агента
+agent = AgentSystem()
 
-# создаём LLM-клиент один раз при старте
-LLM_CLIENT = LLMClient(provider=settings.default_provider)
+# Модель для запроса
+class AgentRequest(BaseModel):
+    question: str
+    session_id: Optional[str] = "default"
 
-
-class MessageIn(BaseModel):
-    message: str
-    provider: Optional[str] = None
-
-
-class MessageOut(BaseModel):
+# Модель для ответа
+class AgentResponse(BaseModel):
     answer: str
+    session_id: str
+    status: str
 
+# Эндпоинт для запуска агента
+@app.post("/api/agent/run")
+async def run_agent(request: AgentRequest):
+    """
+    Запускает агента для обработки вопроса.
+    """
+    try:
+        answer = agent.run(request.question, request.session_id)
+        return AgentResponse(
+            answer=answer,
+            session_id=request.session_id,
+            status="success"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/v1/message", response_model=MessageOut)
-def handle_message(payload: MessageIn):
-    if not payload.message or not payload.message.strip():
-        raise HTTPException(status_code=400, detail="message is required")
+# Эндпоинт для проверки состояния агента
+@app.get("/api/agent/status")
+async def get_agent_status():
+    """
+    Возвращает статус агента.
+    """
+    return {"status": "ready"}
 
-    # Если пользователь указал provider — можно создать отдельный LLM-клиент на лету.
-    if payload.provider and payload.provider != settings.default_provider:
-        local_client = LLMClient(provider=payload.provider)
-        # Передаем список и берем первый элемент результата
-        results = local_client.generate([payload.message])
-        answer = results[0] if results else ""
-    else:
-        # Передаем список и берем первый элемент результата
-        results = LLM_CLIENT.generate([payload.message])
-        answer = results[0] if results else ""
+# Эндпоинт для завершения сессии
+@app.post("/api/agent/end_session")
+async def end_session(session_id: Optional[str] = "default"):
+    """
+    Завершает сессию агента.
+    """
+    try:
+        # Здесь можно добавить логику для завершения сессии, если это необходимо
+        return {"status": "success", "message": "Session ended", "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    return MessageOut(answer=answer)
+# Запуск приложения
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8250)

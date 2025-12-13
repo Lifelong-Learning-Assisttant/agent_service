@@ -8,15 +8,16 @@ services:
     volumes:
       - ./:/app
     ports:
-      - "8099:8000"
+      - "8250:8250"
     environment:
       - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
-    command: ["tail", "-f", "/dev/null"]
+    command: ["uv", "run", "python", "app.py"]
     networks:
       - default
       - rag_network
       - test_generator_network
+      - web_ui_network
 
 networks:
   rag_network:
@@ -25,3 +26,6 @@ networks:
   test_generator_network:
     external: true
     name: llm_tester_default
+  web_ui_network:
+    external: true
+    name: web_ui_internal_network
