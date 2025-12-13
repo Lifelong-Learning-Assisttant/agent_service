@@ -10,7 +10,6 @@
   "retry_jitter_s": 0.5,
   "emb_batch_size": 64,
   "log_level": "INFO",
-  "tavily_url": "http://tavily_server:8000",
-  "context7_url": "http://context7_server:8000/mcp",
-  "addition_service_url": "http://192.168.0.174:8000"
+  "addition_service_url": "http://addition_service:8000",
+  "rag_service_url": "http://rag:8000"
 }

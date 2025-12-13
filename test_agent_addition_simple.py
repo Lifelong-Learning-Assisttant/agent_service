@@ -5,7 +5,7 @@
 
 import os
 import logging
-from context7_agent import Context7AgentSystem
+from context7_agent import AgentSystem
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +15,7 @@ def test_agent_addition_simple():
     """Тестирует работу агента с инструментом сложения (простой вопрос)."""
     
     log.info("Creating agent...")
-    agent = Context7AgentSystem()
+    agent = AgentSystem()
     
     # Задаем простой вопрос о сложении
     question = "Сколько будет 8 плюс 12?"
@@ -33,7 +33,7 @@ def test_agent_addition_simple():
         else:
             log.error(f"❌ Agent did not calculate correctly. Response: {result}")
             return False
-            
+             
     except Exception as e:
         log.error(f"❌ Agent test failed with error: {e}")
         return False

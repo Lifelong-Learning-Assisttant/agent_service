@@ -1,4 +1,3 @@
-# agent_service/context7_agent.py
 from typing import Dict, Optional, TypedDict, Literal
 
 from langgraph.graph import StateGraph, START, END
@@ -7,25 +6,25 @@ from langchain_core.messages import AIMessage
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import context7_search, addition_service, make_tools
+from langchain_tools import addition_service, make_tools
 
 
 # ---------- Состояние графа ----------
 class AgentState(TypedDict, total=False):
     """Общее состояние исполнения графа."""
+
     question: str
-    route: Literal["direct", "context7", "tools"]
+    route: Literal["direct", "tools"]
     answer: str
     meta: Dict[str, str]
 
 
 # ---------- Агентная система ----------
-class Context7AgentSystem:
+class AgentSystem:
     """
     Агент на LangGraph с роутингом:
-    - router → определяет маршрут 'direct' | 'context7' | 'tools'
+    - router → определяет маршрут 'direct' | 'tools'
     - answer_direct → отвечает напрямую через LLM
-    - answer_context7 → использует context7 для поиска и отвечает с учётом контекста
     - answer_with_tools → использует доступные инструменты для ответа
     """
 
@@ -42,18 +41,18 @@ class Context7AgentSystem:
         self.client = LLMClient(provider=prov)
         self.cfg = cfg
         self.log.info("Инициализация агента: provider=%s", prov)
-        
+
         # Инициализируем инструменты
         self.tools = make_tools()
         self.tool_names = [tool.name for tool in self.tools]
         self.log.info("Available tools: %s", self.tool_names)
-        
+
         self.app = self._build_graph()
 
     # ---------- Узлы графа ----------
     def router(self, state: AgentState) -> AgentState:
         """
-        Классифицирует запрос: direct | context7 | tools и возвращает обновлённый state.
+        Классифицирует запрос: direct | tools и возвращает обновлённый state.
         """
         import time
 
@@ -63,23 +62,11 @@ class Context7AgentSystem:
 
         # Сначала проверяем, нужно ли использовать инструменты
         if self._should_use_tools(q):
-            route: Literal["direct", "context7", "tools"] = "tools"
+            route: Literal["direct", "tools"] = "tools"
             self.log.info("Router detected tool usage requirement")
         else:
-            # Используем LLM для маршрутизации между direct и context7
-            system = (
-                "Ты — маршрутизатор запросов. Верни ОДНО слово: "
-                "'direct' если на вопрос можно ответить напрямую; "
-                "'context7' если потребуется поиск в документации или коде."
-            )
-            prompt = f"{system}\n\nВопрос: {q}\nОтвет:"
-            route_raw = (self.client.generate([prompt], temperature=0.0)[0] or "").strip().lower()
-
-            if any(w in route_raw for w in ("context7", "документация", "код", "поиск")):
-                route = "context7"
-            else:
-                route = "direct"
-
+            # Используем LLM для маршрутизации между direct
+            route = "direct"
         dt = (time.perf_counter() - t0) * 1000
         self.log.info("done:router | route=%s | %.1f ms", route, dt)
         return {**state, "route": route}
@@ -101,31 +88,9 @@ class Context7AgentSystem:
         answer = self.client.generate([prompt], temperature=0.2)[0]
 
         dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:answer_direct | out_len=%d | %.1f ms", len(answer or ""), dt)
-        return {**state, "answer": answer}
-
-    def answer_context7(self, state: AgentState) -> AgentState:
-        """
-        Использует context7 для поиска и отвечает с учётом контекста.
-        """
-        import time
-
-        q = (state.get("question") or "").strip()
-        self.log.info("start:answer_context7 | q_len=%d", len(q))
-        t0 = time.perf_counter()
-
-        # Используем context7 для поиска с правильным форматом библиотеки
-        context = context7_search("/tiangolo/fastapi")
-        prompt = (
-            "Ответь, используя предоставленный контекст. Если в контексте нет ответа — скажи об этом явно.\n\n"
-            f"[КОНТЕКСТ]\n{context}\n\n"
-            f"[ВОПРОС]\n{q}\n\n"
-            "Ответ:"
+        self.log.info(
+            "done:answer_direct | out_len=%d | %.1f ms", len(answer or ""), dt
         )
-        answer = self.client.generate([prompt], temperature=0.2)[0]
-
-        dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:answer_context7 | out_len=%d | %.1f ms", len(answer or ""), dt)
         return {**state, "answer": answer}
 
     def answer_with_tools(self, state: AgentState) -> AgentState:
@@ -142,24 +107,78 @@ class Context7AgentSystem:
         # Проверяем, нужно ли использовать инструмент сложения
         if "addition_service" in q.lower() or "инструмент сложения" in q.lower():
             # Извлекаем числа из вопроса
-            numbers = re.findall(r'\d+\.?\d*', q)
+            numbers = re.findall(r"\d+\.?\d*", q)
             if len(numbers) >= 2:
                 try:
                     a = float(numbers[0])
                     b = float(numbers[1])
-                    
+
                     self.log.info(f"Using addition_service with a={a}, b={b}")
                     result = addition_service(a, b)
-                    
-                    answer = f"Используя инструмент addition_service: {a} + {b} = {result}"
+
+                    answer = (
+                        f"Используя инструмент addition_service: {a} + {b} = {result}"
+                    )
                     self.log.info(f"Tool result: {answer}")
-                    
+
                     dt = (time.perf_counter() - t0) * 1000
-                    self.log.info("done:answer_with_tools | out_len=%d | %.1f ms", len(answer or ""), dt)
+                    self.log.info(
+                        "done:answer_with_tools | out_len=%d | %.1f ms",
+                        len(answer or ""),
+                        dt,
+                    )
                     return {**state, "answer": answer}
                 except Exception as e:
                     self.log.error(f"Tool execution failed: {e}")
                     answer = f"Ошибка при использовании инструмента: {str(e)}"
+
+        # Проверяем, нужно ли использовать инструмент поиска RAG
+        if "rag_search" in q.lower() or "поиск документов" in q.lower():
+            try:
+                from langchain_tools import rag_search
+                
+                self.log.info(f"Using rag_search tool for query: {q}")
+                result = rag_search(q)
+                
+                answer = (
+                    f"Результаты поиска через RAG:\n{result}"
+                )
+                self.log.info(f"RAG search result: {answer}")
+
+                dt = (time.perf_counter() - t0) * 1000
+                self.log.info(
+                    "done:answer_with_tools | out_len=%d | %.1f ms",
+                    len(answer or ""),
+                    dt,
+                )
+                return {**state, "answer": answer}
+            except Exception as e:
+                self.log.error(f"RAG search tool execution failed: {e}")
+                answer = f"Ошибка при поиске через RAG: {str(e)}"
+
+        # Проверяем, нужно ли использовать инструмент генерации RAG
+        if "rag_generate" in q.lower() or "сгенерировать ответ" in q.lower():
+            try:
+                from langchain_tools import rag_generate
+                
+                self.log.info(f"Using rag_generate tool for query: {q}")
+                result = rag_generate(q)
+                
+                answer = (
+                    f"Сгенерированный ответ через RAG:\n{result}"
+                )
+                self.log.info(f"RAG generate result: {answer}")
+
+                dt = (time.perf_counter() - t0) * 1000
+                self.log.info(
+                    "done:answer_with_tools | out_len=%d | %.1f ms",
+                    len(answer or ""),
+                    dt,
+                )
+                return {**state, "answer": answer}
+            except Exception as e:
+                self.log.error(f"RAG generate tool execution failed: {e}")
+                answer = f"Ошибка при генерации через RAG: {str(e)}"
 
         # Если инструмент не нужен, используем стандартный ответ
         answer = self.answer_direct(state).get("answer", "")
@@ -172,7 +191,6 @@ class Context7AgentSystem:
         route = state.get("route", "direct")
         return {
             "direct": "answer_direct",
-            "context7": "answer_context7",
             "tools": "answer_with_tools",
         }.get(route, "answer_direct")
 
@@ -180,10 +198,15 @@ class Context7AgentSystem:
         """Определяет, нужно ли использовать инструменты."""
         question_lower = question.lower()
         # Проверяем явное упоминание инструментов
-        if any(tool in question_lower for tool in ["addition_service", "инструмент сложения"]):
+        if any(
+            tool in question_lower
+            for tool in ["addition_service", "инструмент сложения", "rag_search", "поиск документов", "rag_generate", "сгенерировать ответ"]
+        ):
             return True
         # Проверяем математические выражения
-        if "+" in question and ("сколько" in question_lower or "посчитай" in question_lower):
+        if "+" in question and (
+            "сколько" in question_lower or "посчитай" in question_lower
+        ):
             return True
         return False
 
@@ -198,13 +221,11 @@ class Context7AgentSystem:
         builder = StateGraph(AgentState)
         builder.add_node("router", self.router)
         builder.add_node("answer_direct", self.answer_direct)
-        builder.add_node("answer_context7", self.answer_context7)
         builder.add_node("answer_with_tools", self.answer_with_tools)
 
         builder.add_edge(START, "router")
         builder.add_conditional_edges("router", self._route_edge)
         builder.add_edge("answer_direct", END)
-        builder.add_edge("answer_context7", END)
         builder.add_edge("answer_with_tools", END)
 
         app = builder.compile()

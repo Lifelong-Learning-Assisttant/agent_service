@@ -10,19 +10,9 @@ services:
     ports:
       - "8099:8000"
     environment:
-      - TAVILY_URL=http://tavily_server:8000
-      - CONTEXT7_URL=http://context7_server:8000
-      - CONTEXT7_API_KEY=${CONTEXT7_API_KEY}
-    networks:
-      - tavily_search_tool_tavily_network
-      - context7_service_context7_network
+      - ADDITION_SERVICE_URL=http://addition_service:8000
+      - RAG_SERVICE_URL=http://rag:8000
     command: ["tail", "-f", "/dev/null"]
     external_links:
-      - tavily_server
-      - context7_server
-
-networks:
-  tavily_search_tool_tavily_network:
-    external: true
-  context7_service_context7_network:
-    external: true
+      - addition_service
+      - rag

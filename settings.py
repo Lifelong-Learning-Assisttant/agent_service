@@ -55,10 +55,11 @@ class LLMSettings(BaseSettings):
     retry_jitter_s: float = 0.5
 
     # ---- External MCPs & App-level settings ----
-    # (URLs можно задавать через переменные окружения CONTEXT7_URL, TAVILY_URL, ADDITION_SERVICE_URL)
+    # (URLs можно задавать через переменные окружения CONTEXT7_URL, TAVILY_URL, ADDITION_SERVICE_URL, RAG_SERVICE_URL)
     context7_url: str | None = Field(default=None)
     tavily_url: str | None = Field(default=None)
     addition_service_url: str | None = Field(default=None)
+    rag_service_url: str | None = Field(default=None)
     context7_api_key: SecretStr | None = Field(default=None)
     http_timeout_s: float = Field(default=60.0)
 
