@@ -26,14 +26,16 @@ class LLMClient:
     Клиент для LLM и эмбеддингов (OpenAI / OpenRouter / Mistral) поверх LangChain.
     """
 
-    def __init__(self, provider: str):
+    def __init__(self, provider: str, system_prompt: Optional[str] = None):
         """
         Args:
             provider: Имя провайдера: "openai" | "openrouter" | "mistral".
+            system_prompt: Системный промпт для использования в генерации.
         """
         self.provider = (provider or "").lower().strip()
         self.cfg = get_settings()
         self.log = get_logger(__name__)
+        self.system_prompt = system_prompt
         self.log.info("Инициализация LLM-клиента: провайдер=%s", self.provider)
 
     # ------------------------- ключ -------------------------
@@ -355,8 +357,8 @@ class LLMClient:
 
             def _fn():
                 messages = [HumanMessage(content=t)]
-                if hasattr(self.cfg, 'system_prompt') and self.cfg.system_prompt:
-                    messages.insert(0, SystemMessage(content=self.cfg.system_prompt))
+                if self.system_prompt:
+                    messages.insert(0, SystemMessage(content=self.system_prompt))
                 return chat.invoke(messages)
 
             try:
