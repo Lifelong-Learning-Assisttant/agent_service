@@ -73,7 +73,7 @@ class LLMSettings(BaseSettings):
     mistral_api_key: SecretStr | None = Field(default=None)
     
     # ---- Системный промпт ----
-    system_prompt: str = Field(default="Отвечайте на вопросы, используя формат MathJax для формул. Например, вместо (x^2 = 4) используйте $$x^2 = 4$$.")
+    system_prompt: str = Field(default="")
 
     def __init__(self, **kwargs):
         """Инициализирует настройки, загружая значения из app_settings.json."""
@@ -89,6 +89,13 @@ class LLMSettings(BaseSettings):
                 field_info = self.__class__.model_fields.get(key)
                 if field_info and current_value == field_info.default:
                     setattr(self, key, value)
+        
+        # Загружаем системный промпт из файла, если он не был переопределён
+        if not self.system_prompt:
+            system_prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "system_prompt.txt")
+            if os.path.exists(system_prompt_path):
+                with open(system_prompt_path, "r", encoding="utf-8") as f:
+                    self.system_prompt = f.read().strip()
 
 
 def get_settings() -> LLMSettings:
