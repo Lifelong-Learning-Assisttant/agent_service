@@ -71,6 +71,9 @@ class LLMSettings(BaseSettings):
     mistral_chat_model: str = Field(default="mistral-large-latest")
     mistral_emb_model: str = Field(default="mistral-embed")
     mistral_api_key: SecretStr | None = Field(default=None)
+    
+    # ---- Системный промпт ----
+    system_prompt: str = Field(default="Отвечайте на вопросы, используя формат MathJax для формул. Например, вместо (x^2 = 4) используйте $$x^2 = 4$$.")
 
     def __init__(self, **kwargs):
         """Инициализирует настройки, загружая значения из app_settings.json."""

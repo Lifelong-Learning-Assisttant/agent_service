@@ -6,7 +6,7 @@ import time
 from typing import Any, List, Optional, Sequence, Tuple
 
 from httpx import ConnectError, HTTPStatusError, TimeoutException
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -354,7 +354,10 @@ class LLMClient:
             self.log.debug("generate: item %d/%d, prompt_len=%d", idx, len(texts), len(t or ""))
 
             def _fn():
-                return chat.invoke([HumanMessage(content=t)])
+                messages = [HumanMessage(content=t)]
+                if hasattr(self.cfg, 'system_prompt') and self.cfg.system_prompt:
+                    messages.insert(0, SystemMessage(content=self.cfg.system_prompt))
+                return chat.invoke(messages)
 
             try:
                 out = self._call_with_retry("generate", _fn)
