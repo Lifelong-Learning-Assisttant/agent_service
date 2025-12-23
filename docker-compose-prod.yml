@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   agent_prod:
-    image: agent_service:v001
+    image: ghcr.io/lifelong-learning-assisttant/agent_service:v001
     ports:
       - "8270:8270"
     volumes:
