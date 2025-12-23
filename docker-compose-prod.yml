@@ -4,13 +4,14 @@ services:
   agent_prod:
     image: agent_service:latest
     ports:
-      - "8150:8150"
+      - "8270:8270"
     volumes:
       - ./app_settings-prod.json:/app/app_settings.json:ro
     environment:
       - PYTHONUNBUFFERED=1
       - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
+      - WEB_UI_URL=http://web_ui_prod:8150
     command: uv run python app.py --settings app_settings.json
     networks:
       - default

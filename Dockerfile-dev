@@ -19,7 +19,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Expose port
-EXPOSE 8350
+EXPOSE 8250
 
 # Start command (will be overridden by docker-compose)
 CMD ["uv", "run", "python", "app.py", "--settings", "app_settings-dev.json"]

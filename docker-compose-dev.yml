@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile-dev
     ports:
-      - "8350:8350"
+      - "8250:8250"
     volumes:
       - .:/app
       - /app/__pycache__
@@ -15,6 +15,7 @@ services:
       - PYTHONUNBUFFERED=1
       - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
+      - WEB_UI_URL=http://web_ui_dev:8350
     command: uv run python app.py --settings app_settings-dev.json
     networks:
       - default

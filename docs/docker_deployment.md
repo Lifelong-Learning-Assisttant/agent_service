@@ -6,8 +6,8 @@
 
 ```
 agent_service/
-├── app_settings-dev.json      # Конфиг для разработки (порт 8350, is_dev_version: true)
-├── app_settings-prod.json     # Конфиг для продакшена (порт 8150, is_dev_version: false)
+├── app_settings-dev.json      # Конфиг для разработки (порт 8250, is_dev_version: true)
+├── app_settings-prod.json     # Конфиг для продакшена (порт 8270, is_dev_version: false)
 ├── Dockerfile-dev             # Dockerfile для разработки
 ├── Dockerfile-prod            # Dockerfile для продакшена
 ├── docker-compose-dev.yml     # Docker Compose для разработки (agent_dev)
@@ -42,7 +42,7 @@ agent_service/
    ```
 
 2. **Особенности:**
-   - Порт: 8350
+   - Порт: 8250
    - Имя сервиса: `agent_dev`
    - Код монтируется через volume: `./:/app`
    - Изменения в файлах `.py` сразу отражаются в контейнере
@@ -70,7 +70,7 @@ services:
       context: .
       dockerfile: Dockerfile-dev
     ports:
-      - "8350:8350"
+      - "8250:8250"
     volumes:
       - .:/app              # Монтирование кода
       - /app/__pycache__    # Исключение кэша
@@ -78,6 +78,7 @@ services:
     environment:
       - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
+      - WEB_UI_URL=http://web_ui_dev:8350
     command: uv run python app.py --settings app_settings-dev.json
     networks:
       - default
@@ -107,7 +108,7 @@ services:
    ```
 
 3. **Особенности:**
-   - Порт: 8150
+   - Порт: 8270
    - Имя сервиса: `agent_prod`
    - Код ВКЛЮЧЕН в образ (скопирован при сборке)
    - Монтируется ТОЛЬКО конфиг: `./app_settings-prod.json:/app/app_settings.json:ro`
@@ -127,12 +128,13 @@ services:
   agent_prod:             # Уникальное имя сервиса
     image: agent_service:latest  # Использует готовый образ
     ports:
-      - "8150:8150"
+      - "8270:8270"
     volumes:
       - ./app_settings-prod.json:/app/app_settings.json:ro  # Только конфиг
     environment:
       - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
+      - WEB_UI_URL=http://web_ui_prod:8150
     command: uv run python app.py --settings app_settings.json
     networks:
       - default
@@ -172,7 +174,7 @@ docker pull ghcr.io/lifelong-learning-assisttant/agent_service:v001
 
 | Аспект | Development | Production |
 |--------|-------------|------------|
-| **Порт** | 8350 | 8150 |
+| **Порт** | 8250 | 8270 |
 | **Код** | Volume (изменения实时) | Внутри образа |
 | **Конфиг** | app_settings-dev.json | app_settings-prod.json |
 | **Сборка** | При каждом запуске | Один раз |
@@ -185,6 +187,7 @@ docker pull ghcr.io/lifelong-learning-assisttant/agent_service:v001
 - `PYTHONUNBUFFERED=1` - немедленный вывод логов
 - `ADDITION_SERVICE_URL=http://addition_service:8000` - URL сервиса сложения
 - `RAG_SERVICE_URL=http://rag-api:8000` - URL RAG сервиса
+- `WEB_UI_URL=http://web_ui_dev:8350` (dev) или `WEB_UI_URL=http://web_ui_prod:8150` (prod) - URL Web UI сервиса
 
 ## Проверка работы
 
@@ -198,7 +201,7 @@ docker-compose -f docker-compose-dev.yml up --build
 docker-compose -f docker-compose-dev.yml logs -f
 
 # Проверить порт
-curl http://localhost:8350/health
+curl http://localhost:8250/health
 
 # Проверить контейнеры
 docker-compose -f docker-compose-dev.yml ps
@@ -220,7 +223,7 @@ docker-compose -f docker-compose-prod.yml up
 docker-compose -f docker-compose-prod.yml logs -f
 
 # Проверить порт
-curl http://localhost:8150/health
+curl http://localhost:8270/health
 
 # Проверить контейнеры
 docker-compose -f docker-compose-prod.yml ps
@@ -241,8 +244,8 @@ docker-compose -f docker-compose-prod.yml up
 ```
 
 Контейнеры будут называться:
-- `agent_dev_1` (dev, порт 8350)
-- `agent_prod_1` (prod, порт 8150)
+- `agent_dev_1` (dev, порт 8250)
+- `agent_prod_1` (prod, порт 8270)
 
 ## Отладка
 
@@ -267,10 +270,10 @@ docker-compose -f docker-compose-prod.yml up
 
 Dev агент общается с dev Web UI на порту 8350:
 - Web UI dev: http://localhost:8350
-- Agent dev: http://localhost:8350
+- Agent dev: http://localhost:8250
 
 Prod агент общается с prod Web UI на порту 8150:
 - Web UI prod: http://localhost:8150
-- Agent prod: http://localhost:8150
+- Agent prod: http://localhost:8270
 
 Оба агента общаются с остальными сервисами (addition_service, rag-api, test_generator) по тем же портам, что и раньше.
