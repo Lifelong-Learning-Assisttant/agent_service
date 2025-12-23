@@ -18,18 +18,17 @@ services:
       - WEB_UI_URL=http://web_ui_dev:8350
     command: uv run python app.py --settings app_settings-dev.json
     networks:
-      - default
+      - web_ui_network_dev
       - rag_network
       - test_generator_network
-      - web_ui_network
 
 networks:
+  web_ui_network_dev:
+    driver: bridge
+    name: web_ui_network_dev
   rag_network:
     external: true
     name: rag_rag_network
   test_generator_network:
     external: true
     name: llm_tester_default
-  web_ui_network:
-    external: true
-    name: web_ui_internal_network
