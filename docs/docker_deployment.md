@@ -63,29 +63,7 @@ agent_service/
 - Код монтируется при запуске через volume
 
 **docker-compose-dev.yml:**
-```yaml
-services:
-  agent_dev:              # Уникальное имя сервиса
-    build:
-      context: .
-      dockerfile: Dockerfile-dev
-    ports:
-      - "8250:8250"
-    volumes:
-      - .:/app              # Монтирование кода
-      - /app/__pycache__    # Исключение кэша
-      - /app/.pytest_cache  # Исключение кэша тестов
-    environment:
-      - ADDITION_SERVICE_URL=http://addition_service:8000
-      - RAG_SERVICE_URL=http://rag-api:8000
-      - WEB_UI_URL=http://web_ui_dev:8350
-    command: uv run python app.py --settings app_settings-dev.json
-    networks:
-      - default
-      - rag_network
-      - test_generator_network
-      - web_ui_network
-```
+См. файл [`docker-compose-dev.yml`](agent_service/docker-compose-dev.yml) для полной конфигурации.
 
 ## Режим продакшена (Production)
 
@@ -123,25 +101,7 @@ services:
 - Использует `app_settings.json` внутри контейнера (переопределяется через volume)
 
 **docker-compose-prod.yml:**
-```yaml
-services:
-  agent_prod:             # Уникальное имя сервиса
-    image: agent_service:latest  # Использует готовый образ
-    ports:
-      - "8270:8270"
-    volumes:
-      - ./app_settings-prod.json:/app/app_settings.json:ro  # Только конфиг
-    environment:
-      - ADDITION_SERVICE_URL=http://addition_service:8000
-      - RAG_SERVICE_URL=http://rag-api:8000
-      - WEB_UI_URL=http://web_ui_prod:8150
-    command: uv run python app.py --settings app_settings.json
-    networks:
-      - default
-      - rag_network
-      - test_generator_network
-      - web_ui_network
-```
+См. файл [`docker-compose-prod.yml`](agent_service/docker-compose-prod.yml) для полной конфигурации.
 
 ## Публикация в GitHub Container Registry
 
@@ -185,9 +145,9 @@ docker pull ghcr.io/lifelong-learning-assisttant/agent_service:v001
 
 Оба режима используют:
 - `PYTHONUNBUFFERED=1` - немедленный вывод логов
-- `ADDITION_SERVICE_URL=http://addition_service:8000` - URL сервиса сложения
 - `RAG_SERVICE_URL=http://rag-api:8000` - URL RAG сервиса
 - `WEB_UI_URL=http://web_ui_dev:8350` (dev) или `WEB_UI_URL=http://web_ui_prod:8150` (prod) - URL Web UI сервиса
+- `TEST_GENERATOR_URL=http://test_generator:52812` - URL Test Generator сервиса
 
 ## Проверка работы
 
@@ -276,4 +236,11 @@ Prod агент общается с prod Web UI на порту 8150:
 - Web UI prod: http://localhost:8150
 - Agent prod: http://localhost:8270
 
-Оба агента общаются с остальными сервисами (addition_service, rag-api, test_generator) по тем же портам, что и раньше.
+**Важно:** Для корректной работы сетей смотрите [network_interaction.md](network_interaction.md).
+
+## Общие сервисы
+
+Агент взаимодействует со следующими сервисами:
+- **RAG Service**: Порт 8000
+- **Test Generator Service**: Порт 52812
+- **Web UI**: Порт 8350 (dev) / 8150 (prod)
