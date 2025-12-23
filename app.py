@@ -17,6 +17,10 @@ parser = argparse.ArgumentParser(description='Agent Service')
 parser.add_argument('--settings', default='app_settings.json', help='Path to settings file')
 args, unknown = parser.parse_known_args()
 
+# Устанавливаем переменную окружения для пути к конфигу
+import os
+os.environ["APP_SETTINGS_PATH"] = os.path.abspath(args.settings)
+
 # Загрузка настроек
 try:
     with open(args.settings, "r") as f:
@@ -24,7 +28,6 @@ try:
     AGENT_PORT = settings.get("agent_port", 8250)
 except FileNotFoundError:
     # Используем переменную окружения, если файл настроек отсутствует
-    import os
     AGENT_PORT = int(os.getenv("AGENT_PORT", "8250"))
 
 # Создание приложения FastAPI
