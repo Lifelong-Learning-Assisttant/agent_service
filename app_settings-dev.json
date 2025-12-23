@@ -1,0 +1,18 @@
+{
+  "default_provider": "openrouter",
+  "openrouter_chat_model": "kwaipilot/kat-coder-pro:free",
+  "openrouter_base_url": "https://openrouter.ai/api/v1",
+  "request_timeout_s": 60.0,
+  "connect_timeout_s": 10.0,
+  "max_retries": 5,
+  "retry_base_s": 1.0,
+  "retry_max_s": 20.0,
+  "retry_jitter_s": 0.5,
+  "emb_batch_size": 64,
+  "log_level": "INFO",
+  "addition_service_url": "http://addition_service:8000",
+  "rag_service_url": "http://rag-api:8000",
+  "test_generator_service_url": "http://llm-tester-api:52812",
+  "is_dev_version": true,
+  "agent_port": 8350
+}
