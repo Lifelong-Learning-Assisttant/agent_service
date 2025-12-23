@@ -17,7 +17,7 @@ services:
       - default
       - rag_network
       - test_generator_network
-      - web_ui_network
+      - web_ui_network_prod
 
 networks:
   rag_network:
@@ -26,6 +26,6 @@ networks:
   test_generator_network:
     external: true
     name: llm_tester_default
-  web_ui_network:
+  web_ui_network_prod:
     external: true
-    name: web_ui_internal_network
+    name: web_ui_network_prod
