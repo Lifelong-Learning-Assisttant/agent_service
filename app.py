@@ -3,11 +3,32 @@
 FastAPI приложение для агента.
 """
 
+import argparse
+import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 from agent_system import AgentSystem
+from settings import get_settings
+
+# Парсинг аргументов командной строки
+parser = argparse.ArgumentParser(description='Agent Service')
+parser.add_argument('--settings', default='app_settings.json', help='Path to settings file')
+args, unknown = parser.parse_known_args()
+
+# Устанавливаем переменную окружения для пути к конфигу
+import os
+os.environ["APP_SETTINGS_PATH"] = os.path.abspath(args.settings)
+
+# Загрузка настроек
+try:
+    with open(args.settings, "r") as f:
+        settings = json.load(f)
+    AGENT_PORT = settings.get("agent_port", 8250)
+except FileNotFoundError:
+    # Используем переменную окружения, если файл настроек отсутствует
+    AGENT_PORT = int(os.getenv("AGENT_PORT", "8250"))
 
 # Создание приложения FastAPI
 app = FastAPI()
@@ -65,4 +86,4 @@ async def end_session(session_id: Optional[str] = "default"):
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8250)
+    uvicorn.run(app, host="0.0.0.0", port=AGENT_PORT)

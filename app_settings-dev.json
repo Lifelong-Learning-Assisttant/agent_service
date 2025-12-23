@@ -12,5 +12,8 @@
   "log_level": "INFO",
   "addition_service_url": "http://addition_service:8000",
   "rag_service_url": "http://rag-api:8000",
-  "test_generator_service_url": "http://llm-tester-api:52812"
+  "test_generator_service_url": "http://llm-tester-api:52812",
+  "is_dev_version": true,
+  "agent_port": 8250,
+  "web_ui_url": "http://web_ui_dev:8350"
 }

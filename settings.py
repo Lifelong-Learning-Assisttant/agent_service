@@ -8,8 +8,14 @@ ProviderName = Literal["openai", "openrouter", "mistral"]
 
 
 def load_app_settings():
-    """Загружает настройки из app_settings.json."""
-    app_settings_path = os.path.join(os.path.dirname(__file__), "app_settings.json")
+    """Загружает настройки из app_settings.json или из переменной окружения APP_SETTINGS_PATH."""
+    # Проверяем переменную окружения для кастомного пути
+    custom_path = os.getenv("APP_SETTINGS_PATH")
+    if custom_path:
+        app_settings_path = custom_path
+    else:
+        app_settings_path = os.path.join(os.path.dirname(__file__), "app_settings.json")
+    
     if os.path.exists(app_settings_path):
         with open(app_settings_path, "r", encoding="utf-8") as f:
             return json.load(f)

@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  agent_dev:
+    build:
+      context: .
+      dockerfile: Dockerfile-dev
+    ports:
+      - "8250:8250"
+    volumes:
+      - .:/app
+      - /app/__pycache__
+      - /app/.pytest_cache
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ADDITION_SERVICE_URL=http://addition_service:8000
+      - RAG_SERVICE_URL=http://rag-api:8000
+      - WEB_UI_URL=http://web_ui_dev:8350
+    command: uv run python app.py --settings app_settings-dev.json
+    networks:
+      - web_ui_network_dev
+      - rag_network
+      - test_generator_network
+
+networks:
+  web_ui_network_dev:
+    driver: bridge
+    name: web_ui_network_dev
+  rag_network:
+    external: true
+    name: rag_rag_network
+  test_generator_network:
+    external: true
+    name: llm_tester_default

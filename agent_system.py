@@ -1,4 +1,5 @@
 from typing import Dict, Optional, TypedDict, Literal, List
+import os
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -7,7 +8,7 @@ from langchain_core.messages import AIMessage
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import addition_service, make_tools, rag_search
+from langchain_tools import make_tools, rag_search
 
 
 # ---------- Состояние графа ----------
@@ -41,7 +42,15 @@ class AgentSystem:
         cfg = get_settings()
         # Используем провайдер по умолчанию, если не указан
         prov = provider or cfg.default_provider
-        self.client = LLMClient(provider=prov)
+        
+        # Загружаем системный промпт
+        system_prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "system_prompt.txt")
+        system_prompt = ""
+        if os.path.exists(system_prompt_path):
+            with open(system_prompt_path, "r", encoding="utf-8") as f:
+                system_prompt = f.read().strip()
+        
+        self.client = LLMClient(provider=prov, system_prompt=system_prompt)
         self.cfg = cfg
         self.log.info("Инициализация агента: provider=%s", prov)
 

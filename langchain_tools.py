@@ -45,45 +45,6 @@ def _post_json(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any
         return {"error": str(e)}
 
 
-def addition_service(a: float, b: float) -> float:
-    """
-    Вызывает сервис сложения через FastAPI.
-    
-    Args:
-        a: Первое слагаемое
-        b: Второе слагаемое
-        
-    Returns:
-        Результат сложения
-    """
-    addition_service_url = settings.addition_service_url
-    log.info(f"Addition service tool called with a={a}, b={b}")
-    
-    if not addition_service_url:
-        log.warning("Addition service not configured; performing local calculation")
-        return a + b
-    
-    try:
-        payload = {"a": a, "b": b}
-        log.info(f"Calling addition service at {addition_service_url} with payload: {payload}")
-        
-        with httpx.Client(timeout=settings.http_timeout_s) as client:
-            response = client.post(f"{addition_service_url}/add", json=payload)
-            response.raise_for_status()
-            result = response.json()
-         
-        if "result" in result:
-            final_result = result["result"]
-            log.info(f"Addition service returned result: {final_result}")
-            return final_result
-        else:
-            log.error(f"Unexpected response format from addition service: {result}")
-            return a + b  # Fallback to local calculation
-         
-    except Exception as e:
-        log.error(f"Addition service call failed: {e}")
-        log.info(f"Falling back to local calculation: {a} + {b} = {a + b}")
-        return a + b  # Fallback to local calculation
 
 
 def rag_search(query: str, top_k: int = 5, use_hyde: bool = False) -> str:
@@ -218,11 +179,6 @@ def make_tools() -> List[Tool]:
     Следует лучшим практикам для MCP инструментов.
     """
     tools = [
-        Tool(
-            name="addition_service",
-            func=addition_service,
-            description="Adds two numbers using the addition service. Input should be two numbers a and b. Returns the sum of a and b."
-        ),
         Tool(
             name="rag_search",
             func=rag_search,

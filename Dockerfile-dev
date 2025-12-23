@@ -1,0 +1,32 @@
+FROM python:3.13-slim
+
+# Install system dependencies required for building Python packages
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Set working directory
+WORKDIR /app
+
+# Copy only dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies
+RUN uv sync --frozen
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Expose port
+EXPOSE 8250
+
+# Start command (will be overridden by docker-compose)
+CMD ["uv", "run", "python", "app.py", "--settings", "app_settings-dev.json"]
