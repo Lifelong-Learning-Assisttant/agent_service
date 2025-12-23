@@ -14,7 +14,6 @@ services:
       - WEB_UI_URL=http://web_ui_prod:8150
     command: uv run python app.py --settings app_settings-prod.json
     networks:
-      - default
       - rag_network
       - test_generator_network
       - web_ui_network_prod
