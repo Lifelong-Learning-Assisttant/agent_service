@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import addition_service, make_tools, rag_search
+from langchain_tools import make_tools, rag_search
 
 
 # ---------- Состояние графа ----------
