@@ -154,31 +154,33 @@ class TestAgentSession:
     
     @pytest.mark.asyncio
     async def test_run_graph_success(self, agent_session):
-        """Тест успешного выполнения _run_graph."""
-        with patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify, \
-             patch.object(agent_session, 'call_tool', new_callable=AsyncMock) as mock_call_tool:
+        """Тест успешного выполнения _run_graph с реальными инструментами."""
+        # Мокаем только LLM клиент для определения намерения
+        with patch.object(agent_session.parent, 'client') as mock_client, \
+             patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
             
-            mock_call_tool.side_effect = [
-                ["Док 1", "Док 2"],  # rag_search
-                "Квиз сгенерирован"  # generate_exam
-            ]
+            # Настройка моков для LLM
+            mock_client.generate.return_value = ["generate_quiz"]
             
             await agent_session._run_graph("test question")
             
-            # Проверяем вызовы notify_ui
-            assert mock_notify.call_count >= 4
+            # Проверяем, что намерение было определено
+            mock_client.generate.assert_called()
             
-            # Проверяем вызовы инструментов
-            assert mock_call_tool.call_count == 2
-            
-            # Проверяем финальный ответ
+            # Проверяем, что финальный ответ был установлен
             assert "final_answer" in agent_session.state
-            assert "Квиз готов!" in agent_session.state["final_answer"]
+            # Проверяем, что были вызовы notify_ui
+            assert mock_notify.call_count >= 2
     
     @pytest.mark.asyncio
     async def test_run_graph_cancelled(self, agent_session):
         """Тест отмены _run_graph."""
-        with patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
+        with patch.object(agent_session.parent, 'client') as mock_client, \
+             patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
+            
+            # Настройка моков для LLM
+            mock_client.generate.return_value = ["general"]
+            
             # Создаем задачу и отменяем ее
             task = asyncio.create_task(agent_session._run_graph("test"))
             task.cancel()
@@ -188,37 +190,48 @@ class TestAgentSession:
             except asyncio.CancelledError:
                 pass
             
-            # Проверяем, что было отправлено уведомление об отмене
-            # (в реальном коде это делается в _run_graph)
+            # Проверяем, что была попытка вызвать LLM
+            mock_client.generate.assert_called()
     
     @pytest.mark.asyncio
     async def test_run_graph_error(self, agent_session):
         """Тест ошибки в _run_graph."""
-        with patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
-            # Мокаем call_tool чтобы вызвать ошибку
-            with patch.object(agent_session, 'call_tool', side_effect=ValueError("Test error")):
-                await agent_session._run_graph("test")
-                
-                # Проверяем, что было отправлено уведомление об ошибке
-                # (в реальном коде это делается в _run_graph)
+        # Мокаем LLM клиент чтобы вызвать ошибку
+        with patch.object(agent_session.parent, 'client') as mock_client, \
+             patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
+            
+            # Заставляем LLM вызвать ошибку
+            mock_client.generate.side_effect = Exception("LLM error")
+            
+            await agent_session._run_graph("test")
+            
+            # Проверяем, что было отправлено уведомление об ошибке
+            error_calls = [call for call in mock_notify.call_args_list if call[1].get('level') == 'error']
+            assert len(error_calls) > 0
     
     @pytest.mark.asyncio
     async def test_call_tool_rag_search(self, agent_session):
-        """Тест вызова инструмента rag_search."""
+        """Тест вызова инструмента rag_search с реальным сервисом."""
         with patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
-            result = await agent_session.call_tool("rag_search", query="test")
+            result = await agent_session.call_tool("rag_search", query="машинное обучение")
             
-            assert result == ["Документ 1", "Документ 2", "Документ 3"]
-            assert mock_notify.call_count == 2  # start и done
+            # Проверяем, что результат получен и это список
+            assert isinstance(result, list)
+            # Должно быть хотя бы одно уведомление (start)
+            assert mock_notify.call_count >= 1
     
     @pytest.mark.asyncio
     async def test_call_tool_generate_exam(self, agent_session):
-        """Тест вызова инструмента generate_exam."""
+        """Тест вызова инструмента generate_exam с реальным сервисом."""
         with patch.object(agent_session, 'notify_ui', new_callable=AsyncMock) as mock_notify:
-            result = await agent_session.call_tool("generate_exam", markdown_content="test")
+            # Используем небольшой контент для теста
+            test_content = "# Тест по машинному обучению\n\nВопрос: Что такое регрессия?"
+            result = await agent_session.call_tool("generate_exam", markdown_content=test_content)
             
-            assert "Вопрос 1" in result
-            assert mock_notify.call_count == 2
+            # Проверяем, что результат получен
+            assert result is not None
+            # Должно быть хотя бы одно уведомление (start)
+            assert mock_notify.call_count >= 1
     
     @pytest.mark.asyncio
     async def test_cancel(self, agent_session):

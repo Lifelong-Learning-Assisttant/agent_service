@@ -1,15 +1,16 @@
 # agent_service/test_test_generator_integration.py
 """
-Скрипт для тестирования интеграции с сервисом test_generator.
+Скрипт для тестирования асинхронной интеграции с сервисом test_generator.
 """
 import sys
 import json
+import asyncio
 sys.path.append('/app')
-from langchain_tools import generate_exam, grade_exam
+from langchain_tools import generate_exam_async, grade_exam_async
 
 
-def test_generate_exam():
-    """Тест генерации экзамена."""
+async def test_generate_exam_async():
+    """Тест асинхронной генерации экзамена."""
     markdown_content = """# Test Section 1
 
 This is the first section of the test content.
@@ -34,8 +35,8 @@ This is another subsection with additional details.
         "provider": "local"
     }
     
-    print("Testing generate_exam...")
-    result = generate_exam(markdown_content, config)
+    print("Testing generate_exam_async...")
+    result = await generate_exam_async(markdown_content, config)
     result_dict = json.loads(result)
     
     if "error" in result_dict:
@@ -46,8 +47,8 @@ This is another subsection with additional details.
     return True
 
 
-def test_grade_exam():
-    """Тест оценки экзамена."""
+async def test_grade_exam_async():
+    """Тест асинхронной оценки экзамена."""
     # Сначала сгенерируем экзамен
     markdown_content = """# Test Section 1
 
@@ -74,7 +75,7 @@ This is another subsection with additional details.
     }
     
     # Генерируем экзамен
-    generate_result = generate_exam(markdown_content, config)
+    generate_result = await generate_exam_async(markdown_content, config)
     generate_result_dict = json.loads(generate_result)
     
     if "error" in generate_result_dict:
@@ -97,8 +98,8 @@ This is another subsection with additional details.
                 "choice": question["correct"]
             })
     
-    print("Testing grade_exam...")
-    result = grade_exam(exam_id, answers)
+    print("Testing grade_exam_async...")
+    result = await grade_exam_async(exam_id, answers)
     result_dict = json.loads(result)
     
     if "error" in result_dict:
@@ -109,14 +110,19 @@ This is another subsection with additional details.
     return True
 
 
-if __name__ == "__main__":
-    print("Starting test_generator integration tests...")
+async def main():
+    """Основная функция тестирования."""
+    print("Starting async test_generator integration tests...")
     
     success = True
-    success &= test_generate_exam()
-    success &= test_grade_exam()
+    success &= await test_generate_exam_async()
+    success &= await test_grade_exam_async()
     
     if success:
-        print("All tests passed!")
+        print("All async tests passed!")
     else:
-        print("Some tests failed!")
+        print("Some async tests failed!")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -18,16 +18,16 @@ class TestAgentSystemSessions:
         """Фикстура для создания AgentSystem с моками."""
         with patch('agent_system.get_settings') as mock_get_settings, \
              patch('agent_system.LLMClient'), \
-             patch('agent_system.make_tools'), \
+             patch('agent_system.make_async_tools'), \
              patch('agent_system.MemorySaver'), \
              patch('agent_system.StateGraph'):
-            
+             
             mock_cfg = Mock()
             mock_cfg.default_provider = "openai"
             mock_cfg.session_ttl_seconds = 600
             mock_cfg.concurrency_limit = 2
             mock_get_settings.return_value = mock_cfg
-            
+             
             system = AgentSystem()
             # Останавливаем sweeper для тестов
             if system._sweeper_task:

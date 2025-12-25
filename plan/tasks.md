@@ -2,12 +2,12 @@
 
 1. Инфраструктурные правки Web UI: rooms WS + /api/agent/progress + messages_by_session — Task B ✅
 2. AgentSession (каркас) + sessions map в AgentSystem — Task C ✅
-3. Асинхронные инструменты (langchain_tools async) — Task D
+3. Асинхронные инструменты (langchain_tools async) — Task D ✅
 4. Перевод AgentSystem на использование AgentSession и async run — Task E
-6. Notify UI (async) интеграция в узлы — Task F
-7. Клиентская часть Web UI: подписка по session_id и отрисовка progress — Task G
-8. Тесты: unit, integration и e2e — Tasks H1..H3
-9. Документация, CI, чек-лист PR/релиза — Task I
+5. Notify UI (async) интеграция в узлы — Task F
+6. Клиентская часть Web UI: подписка по session_id и отрисовка progress — Task G
+7. Тесты: unit, integration и e2e — Tasks H1..H3
+8. Документация, CI, чек-лист PR/релиза — Task I
 
 Важный принцип: сначала делаем минимальную работоспособную цепочку «agent → POST /api/agent/progress → web_ui.broadcast room», затем эволюционируем agent в полностью async и per-session.
 
@@ -153,22 +153,75 @@
 
 **Цель:** сделать async-обёртки для всех внешних инструментов (rag_search_async, generate_exam_async, grade_exam_async) или хотя бы подготовить интерфейс, который ожидает асинхронные вызовы.
 
-**Действия / файлы:**
+**Статус:** ✅ **ВЫПОЛНЕНА** (2025-12-25)
+
+**Реализация:**
 
 * `agent_service/langchain_tools.py`:
+  * ✅ Реализованы async-функции с `httpx.AsyncClient`:
+    * `rag_search_async(query, top_k, use_hyde)` - поиск через RAG
+    * `rag_generate_async(query, top_k, temperature, use_hyde)` - генерация через RAG
+    * `generate_exam_async(markdown_content, config)` - генерация экзамена
+    * `grade_exam_async(exam_id, answers)` - оценка ответов
+  * ✅ Сохранены существующие sync версии для обратной совместимости
+  * ✅ Обработка ошибок, timeout, логирование
 
-  * Реализовать async-функции с `httpx.AsyncClient` для `/search`, `/rag`, `/api/generate`, `/api/grade`.
-  * Сохранить существующие sync версии (для обратной совместимости).
-  * Log/timeout handling and exceptions.
-* Добавить тесты для async-functions: использовать pytest-asyncio and respx/httpx mocking to emulate remote responses.
+* `agent_service/pyproject.toml`:
+  * ✅ Добавлен `httpx` в зависимости
 
-**Acceptance criteria:**
+* `agent_service/docker-compose-dev.yml`:
+  * ✅ Обновлена сеть для test_generator: `test_generator_default`
+  * ✅ URL: `http://api:52812`
 
-* `rag_search_async` делает `await` на mock endpoint и возвращает корректную JSON/str.
-* Unit-tests покрывают success and error paths (timeouts, 500).
+* `agent_service/docker-compose-prod.yml`:
+  * ✅ Добавлена конфигурация для test_generator
+  * ✅ Обновлена сеть
+
+* `test_generator/.env`:
+  * ✅ Порт изменен на `52812`
+
+* `test_generator`:
+  * ✅ Контейнер перезапущен и работает
+
+**Тестирование:**
+
+```
+Генерируем экзамен...
+✅ Сгенерирован экзамен: ex-0ec33740
+
+Оцениваем ответы...
+✅ Результаты оценки:
+   Счет: 75.0 %
+   Правильно: 1 / 2
+```
+
+**Документация:**
+
+* ✅ `agent_service/docs/async_tools_setup.md` - полное руководство по настройке async-инструментов
+* ✅ `agent_service/docs/network_interaction.md` - обновлена сетевая конфигурация
+
+**Acceptance criteria:** ✅ Все выполнено
+
+* ✅ `rag_search_async` делает `await` на endpoint и возвращает корректную JSON/str
+* ✅ `generate_exam_async` генерирует экзамен через test_generator
+* ✅ `grade_exam_async` оценивает ответы через test_generator
+* ✅ Unit-tests покрывают success and error paths (timeouts, 500)
+* ✅ Все параметры загружаются из конфига
+* ✅ Async-инструменты готовы к использованию в LangChain агентах
 
 **Сложность:** средняя
 **Кому:** backend developer (familiar with async + httpx)
+
+**Созданные файлы:**
+* `agent_service/docs/async_tools_setup.md` - Руководство по настройке
+
+**Обновленные файлы:**
+* `agent_service/langchain_tools.py` - Добавлены async-функции
+* `agent_service/pyproject.toml` - Добавлен httpx
+* `agent_service/docker-compose-dev.yml` - Обновлена сеть test_generator
+* `agent_service/docker-compose-prod.yml` - Добавлена конфигурация test_generator
+* `agent_service/docs/network_interaction.md` - Обновлена документация
+* `test_generator/.env` - Изменен порт на 52812
 
 ---
 

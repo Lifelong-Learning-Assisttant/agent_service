@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import make_tools, rag_search
+from langchain_tools import make_async_tools, rag_search_async, rag_generate_async, generate_exam_async, grade_exam_async
 from agent_session import AgentSession
 
 
@@ -60,7 +60,7 @@ class AgentSystem:
         self.log.info("Инициализация агента: provider=%s", prov)
 
         # Инициализируем инструменты
-        self.tools = make_tools()
+        self.tools = make_async_tools()
         self.tool_names = [tool.name for tool in self.tools]
         self.log.info("Available tools: %s", self.tool_names)
 
@@ -198,7 +198,7 @@ class AgentSystem:
         self.log.info("done:planner | intent=%s | %.1f ms", intent, dt)
         return {**state, "intent": intent}
 
-    def retrieve_node(self, state: AgentState) -> AgentState:
+    async def retrieve_node(self, state: AgentState) -> AgentState:
         """
         Ищет документы в RAG.
         """
@@ -208,7 +208,17 @@ class AgentSystem:
         self.log.info("start:retrieve | q_len=%d", len(q))
         t0 = time.perf_counter()
 
-        docs = rag_search(q)
+        result = await rag_search_async(q)
+        # Парсим JSON результат
+        try:
+            import json
+            docs_data = json.loads(result)
+            if isinstance(docs_data, dict) and "error" in docs_data:
+                docs = []
+            else:
+                docs = docs_data if isinstance(docs_data, list) else [docs_data]
+        except:
+            docs = []
 
         dt = (time.perf_counter() - t0) * 1000
         self.log.info("done:retrieve | docs_count=%d | %.1f ms", len(docs), dt)
@@ -408,8 +418,7 @@ class AgentSystem:
             # Запускаем сессию
             await session.start(question)
             
-            # Ждем завершения (для demo - синхронное ожидание)
-            # В реальной системе можно вернуть task и ждать асинхронно
+            # Ждем завершения
             if session.task:
                 try:
                     await session.task

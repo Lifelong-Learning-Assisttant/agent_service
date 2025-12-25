@@ -13,8 +13,8 @@ services:
       - /app/.pytest_cache
     environment:
       - PYTHONUNBUFFERED=1
-      - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
+      - TEST_GENERATOR_SERVICE_URL=http://api:52812
       - WEB_UI_URL=http://web_ui_dev:8350
     command: uv run python app.py --settings app_settings-dev.json
     networks:
@@ -31,4 +31,4 @@ networks:
     name: rag_rag_network
   test_generator_network:
     external: true
-    name: llm_tester_default
+    name: test_generator_default

@@ -90,7 +90,7 @@ class AgentSession:
     async def _run_graph(self, question: str) -> None:
         """
         Внутренний метод: выполнение графа агента.
-        Здесь будет основная логика с узлами planner, retrieve и т.д.
+        Использует реальные async-инструменты для обработки вопроса.
         
         Args:
             question: Вопрос пользователя
@@ -98,10 +98,7 @@ class AgentSession:
         try:
             self.log.info(f"Session {self.session_id} running graph for question: {question[:50]}...")
             
-            # TODO: Здесь будет интеграция с основным графом агента
-            # Пока что - заглушка с последовательностью уведомлений
-            
-            # 1. Определение намерения
+            # 1. Определение намерения через LLM
             await self.notify_ui(
                 step="start_run",
                 message="Начало обработки запроса",
@@ -110,56 +107,49 @@ class AgentSession:
                 meta={"question": question}
             )
             
-            await asyncio.sleep(0.1)  # Имитация работы
+            # Получаем родительский AgentSystem для доступа к LLM
+            if not hasattr(self.parent, 'client'):
+                raise RuntimeError("Parent AgentSystem не имеет LLM клиента")
+            
+            # Определяем намерение
+            intent = await self._determine_intent(question)
             
             await self.notify_ui(
                 step="intent_determined",
-                message="Определено намерение пользователя",
+                message=f"Определено намерение: {intent}",
                 tool="planner",
                 level="info",
-                meta={"intent": "generate_quiz"}
+                meta={"intent": intent}
             )
             
-            # 2. Извлечение данных (заглушка)
-            await self.notify_ui(
-                step="start_retrieval",
-                message="Начало извлечения данных",
-                tool="rag_search",
-                level="info"
-            )
+            # 2. В зависимости от намерения выполняем действия
+            if intent == "general":
+                # Прямой ответ без инструментов
+                final_answer = await self._direct_answer(question)
+                
+            elif intent == "rag_answer":
+                # Поиск + генерация ответа через RAG
+                docs = await self.call_tool("rag_search", query=question)
+                final_answer = await self.call_tool("rag_generate", query=question)
+                
+            elif intent == "generate_quiz":
+                # Генерация квиза
+                docs = await self.call_tool("rag_search", query=question)
+                exam = await self.call_tool("generate_exam", markdown_content=str(docs))
+                final_answer = f"Квиз сгенерирован:\n\n{exam}"
+                
+            elif intent == "evaluate_quiz":
+                # Оценка ответов (предполагаем, что ответы в state)
+                user_solution = self.state.get("user_solution", question)
+                quiz_content = self.state.get("quiz_content", "")
+                if quiz_content:
+                    final_answer = await self.call_tool("grade_exam", exam_id="quiz_1", answers=[{"solution": user_solution}])
+                else:
+                    final_answer = "Сначала нужно сгенерировать квиз и получить ответы пользователя"
+            else:
+                final_answer = "Не удалось определить намерение"
             
-            # Вызов инструмента через родителя
-            docs = await self.call_tool("rag_search", query=question)
-            
-            await self.notify_ui(
-                step="retrieval_done",
-                message=f"Получено документов: {len(docs) if isinstance(docs, list) else 'N/A'}",
-                tool="rag_search",
-                level="info",
-                meta={"docs_count": len(docs) if isinstance(docs, list) else 0}
-            )
-            
-            # 3. Генерация ответа (заглушка)
-            await self.notify_ui(
-                step="start_generate_exam",
-                message="Начало генерации квиза",
-                tool="generate_exam",
-                level="info"
-            )
-            
-            # Вызов инструмента
-            exam = await self.call_tool("generate_exam", markdown_content=str(docs))
-            
-            await self.notify_ui(
-                step="generate_done",
-                message="Квиз сгенерирован",
-                tool="generate_exam",
-                level="info",
-                meta={"exam_length": len(str(exam))}
-            )
-            
-            # 4. Финальный ответ
-            final_answer = f"Квиз готов!\n\n{exam}"
+            # 3. Сохраняем финальный ответ
             async with self.lock:
                 self.state["final_answer"] = final_answer
             
@@ -192,6 +182,33 @@ class AgentSession:
             )
         finally:
             self.touch()
+    
+    async def _determine_intent(self, question: str) -> str:
+        """Определяет намерение пользователя с использованием LLM."""
+        prompt = (
+            "Определи намерение пользователя. Возможные варианты:\n"
+            "1. general - если пользователь хочет просто поговорить или задать общий вопрос.\n"
+            "2. rag_answer - если пользователь хочет получить ответ на основе учебника Яндекса по машинному обучению.\n"
+            "3. generate_quiz - если пользователь хочет пройти квиз на основе учебника Яндекса.\n"
+            "4. evaluate_quiz - если пользователь хочет оценить результаты прохождения квиза.\n"
+            f"Вопрос: {question}\n"
+            "Выбери наиболее подходящий вариант: general, rag_answer, generate_quiz или evaluate_quiz."
+        )
+        intent = self.parent.client.generate([prompt], temperature=0.1)[0].strip().lower()
+        
+        # Приводим к правильному типу
+        if intent in ["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
+            return intent
+        else:
+            return "general"
+    
+    async def _direct_answer(self, question: str) -> str:
+        """Генерирует прямой ответ без использования инструментов."""
+        prompt = (
+            "Ответь кратко и по делу, оформи в 1–2 абзаца; при необходимости добавь список.\n\n"
+            f"Вопрос: {question}"
+        )
+        return self.parent.client.generate([prompt], temperature=0.2)[0]
     
     async def notify_ui(self, step: str, message: str, tool: Optional[str] = None, 
                        level: str = "info", meta: Optional[Dict[str, Any]] = None) -> None:
@@ -258,16 +275,41 @@ class AgentSession:
         )
         
         try:
-            # Вызов через родителя (будет реализовано позже)
-            # Пока заглушка
+            # Импорт async-инструментов
+            from langchain_tools import rag_search_async, rag_generate_async, generate_exam_async, grade_exam_async
+            import json
+            
+            # Вызов соответствующего async-инструмента
             if tool_name == "rag_search":
-                # Имитация вызова RAG
-                await asyncio.sleep(0.2)
-                result = ["Документ 1", "Документ 2", "Документ 3"]
+                query = kwargs.get("query", args[0] if args else "")
+                result = await rag_search_async(query)
+                # Парсим JSON результат
+                try:
+                    data = json.loads(result)
+                    if isinstance(data, dict) and "error" in data:
+                        result = []
+                    else:
+                        result = data if isinstance(data, list) else [data]
+                except:
+                    result = []
+                    
+            elif tool_name == "rag_generate":
+                query = kwargs.get("query", args[0] if args else "")
+                top_k = kwargs.get("top_k", 5)
+                temperature = kwargs.get("temperature", 0.7)
+                use_hyde = kwargs.get("use_hyde", False)
+                result = await rag_generate_async(query, top_k, temperature, use_hyde)
+                
             elif tool_name == "generate_exam":
-                # Имитация генерации квиза
-                await asyncio.sleep(0.3)
-                result = "Вопрос 1: Что такое машинное обучение?\nВопрос 2: Какие бывают типы обучения?"
+                markdown_content = kwargs.get("markdown_content", args[0] if args else "")
+                config = kwargs.get("config", {})
+                result = await generate_exam_async(markdown_content, config)
+                
+            elif tool_name == "grade_exam":
+                exam_id = kwargs.get("exam_id", args[0] if args else "")
+                answers = kwargs.get("answers", args[1] if len(args) > 1 else [])
+                result = await grade_exam_async(exam_id, answers)
+                
             else:
                 result = None
             
