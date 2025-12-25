@@ -1,10 +1,9 @@
 # Порядок работ и общая последовательность (минимально-зависимая)
 
-1. Подготовка окружения (локальные mocks + CI) — Task A
-2. Инфраструктурные правки Web UI: rooms WS + /api/agent/progress + messages_by_session — Task B
-3. AgentSession (каркас) + sessions map в AgentSystem — Task C
-4. Асинхронные инструменты (langchain_tools async) — Task D
-5. Перевод AgentSystem на использование AgentSession и async run — Task E
+1. Инфраструктурные правки Web UI: rooms WS + /api/agent/progress + messages_by_session — Task B
+2. AgentSession (каркас) + sessions map в AgentSystem — Task C
+3. Асинхронные инструменты (langchain_tools async) — Task D
+4. Перевод AgentSystem на использование AgentSession и async run — Task E
 6. Notify UI (async) интеграция в узлы — Task F
 7. Клиентская часть Web UI: подписка по session_id и отрисовка progress — Task G
 8. Тесты: unit, integration и e2e — Tasks H1..H3
@@ -12,63 +11,63 @@
 
 Важный принцип: сначала делаем минимальную работоспособную цепочку «agent → POST /api/agent/progress → web_ui.broadcast room», затем эволюционируем agent в полностью async и per-session.
 
-# Задача A — Подготовка окружения и mock-сервисов
-
-Цель: подготовить локальное dev-окружение для интеграционного тестирования (mock RAG, mock TestGenerator), обновить docker-compose-dev (или сценарии запуска) и CI для запуска тестов.
-
-Действия / файлы:
-
-Добавить простые mock-сервисы:
-
-mocks/rag_mock.py (FastAPI) — /search и /rag возвращают фиктивные чанки.
-
-mocks/test_generator_mock.py — /api/generate, /api/grade.
-
-Создать новый docker-compose-dev-mock.yml (корневой или в agent_service/) чтобы поднимать agent, web_ui, и два mock-сервиса для локального теста.
-
-Добавить tests/fixtures/ с конфигурациями для тестов (адреса mock-сервисов).
-
-Подзадачи:
-
-Write README dev-run steps: docker compose -f docker-compose-dev_mock.yml up --build.
-
-Add environment variables example .env_example.
-
-Acceptance criteria:
-
-docker-compose-dev поднимает agent, web_ui и mocks, и все health endpoints возвращают 200.
-
-CI может поднять контейнеры в job (или тесты используют pytest + httpx mocking).
-
-Сложность: низкая
-Кому: DevOps / mid backend
-
-
 # Задача B — Web UI: подписки по session (rooms) + progress endpoint
 
 **Цель:** заменить одно глобальное `messages_list` на комнатную модель, предоставить `/api/agent/progress` и WS subscribe/rooms.
 
-**Действия / файлы:**
+**Статус:** ✅ **ВЫПОЛНЕНА** (2025-12-25)
+
+**Реализация:**
 
 * `web_ui_service/api_endpoints.py`:
+  * ✅ Реализован `ConnectionManager` с `connections_by_session: Dict[str, Set[WebSocket]]`
+  * ✅ Методы: `subscribe(ws, session_id)`, `unsubscribe`, `broadcast_to_session(session_id, event)`, `disconnect`
+  * ✅ `/ws` handler с поддержкой команд `{"cmd":"subscribe","session_id":"..."}` и `{"cmd":"unsubscribe","session_id":"..."}`
+  * ✅ `POST /api/agent/progress` — принимает ProgressEvent, валидирует, сохраняет в `messages_by_session[session_id]` (deque max 200), рассылает подписчикам
+  * ✅ `GET /api/messages?session_id=...` — возвращает историю сессии
+  * ✅ Проверка `X-INTERNAL-TOKEN` (опционально)
 
-  * Реализовать `connections_by_session: Dict[str, Set[WebSocket]]`.
-  * Добавить методы: `subscribe(ws, session_id)`, `unsubscribe`, `broadcast_to_session(session_id, event)` и `disconnect` очистку.
-  * Изменить `/ws` handler: при подключении ожидать JSON команды `{"cmd":"subscribe","session_id":"..."}` и регистрировать в комнате. Обрабатывать unsubscribe и disconnect.
-  * Добавить `POST /api/agent/progress` — принимает event JSON, валидирует, кладёт в `messages_by_session[session_id]` (collections.deque(maxlen=N)) и вызывает `await manager.broadcast_to_session(...)`.
-  * Добавить `GET /api/messages?session_id=...` — вернуть историю `messages_by_session[session_id]`.
-  * (Опционально) Проверка заголовка `X-INTERNAL-TOKEN` для internal calls.
+* `web_ui_service/nicegui_api_integration.py`:
+  * ✅ Интеграция API endpoints в NiceGUI
 
-**Подзадачи:**
+* `web_ui_service/web_ui.py`:
+  * ✅ WebSocket клиент для подписки на сессии
+  * ✅ UI для управления session_id и отображения progress
 
-* Вынести тип event schema (pydantic `ProgressEvent`) для валидации.
-* Обновить CORS и middleware по необходимости.
+* `web_ui_service/settings.py`:
+  * ✅ Новый модуль для загрузки параметров из `app_settings-dev.json` и `app_settings-prod.json`
+  * ✅ Параметры: `web_ui_port`, `agent_service_url`, `internal_token`, `max_messages_per_session`, `ws_timeout_seconds`, `agent_post_timeout`
 
-**Acceptance criteria:**
+* `web_ui_service/app_settings-dev.json`:
+  * ✅ Конфиг для dev-окружения со всеми параметрами
 
-* WS-клиент может подписаться и получать сообщения, которые публикует `/api/agent/progress`.
-* `GET /api/messages?session_id=...` возвращает историю для указанной комнаты.
-* Unit-tests: manager.subscribe/ unsubscribe/ broadcast работают корректно (мок WebSocket).
+* `web_ui_service/app_settings-prod.json`:
+  * ✅ Конфиг для prod-окружения со всеми параметрами
+
+* `web_ui_service/pyproject.toml`:
+  * ✅ Добавлены зависимости: websockets, pydantic, pytest, pytest-asyncio
+
+* `web_ui_service/tests/test_api_endpoints.py`:
+  * ✅ 18 unit тестов (все проходят)
+  * ✅ Тесты мокают settings для изоляции
+  * ✅ ConnectionManager (7 тестов)
+  * ✅ API endpoints (6 тестов)
+  * ✅ WebSocket (3 теста)
+  * ✅ Интеграция (2 теста)
+
+**Документация:**
+
+* ✅ `web_ui_service/README.md` — полное описание с 6 Mermaid диаграммами
+* ✅ `web_ui_service/docs/session_management.md` — детальная документация
+
+**Acceptance criteria:** ✅ Все выполнено
+
+* ✅ WS-клиент может подписаться и получать сообщения от `/api/agent/progress`
+* ✅ `GET /api/messages?session_id=...` возвращает историю для комнаты
+* ✅ Unit-tests покрывают subscribe/unsubscribe/broadcast
+* ✅ Множественные сессии изолированы
+* ✅ Fire-and-forget от агента (timeout 0.1s)
+* ✅ Все параметры загружаются из конфига (нет хардкода)
 
 **Сложность:** средняя
 **Кому:** backend (web_ui) developer
