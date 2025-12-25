@@ -473,23 +473,12 @@ class AgentSystem:
         """
         self.log.debug("build_graph: begin")
         builder = StateGraph(AgentState)
-        
-        # Оборачиваем узлы для поддержки session из config
-        def wrap_node(node_func):
-            """Оборачивает узел для поддержки session из конфигурации."""
-            async def wrapped_node(state: AgentState, config: Optional[Dict] = None):
-                session = None
-                if config and "configurable" in config:
-                    session = config["configurable"].get("session")
-                return await node_func(state, session)
-            return wrapped_node
-        
-        builder.add_node("planner", wrap_node(self.planner_node))
-        builder.add_node("retrieve", wrap_node(self.retrieve_node))
-        builder.add_node("direct_answer", wrap_node(self.direct_answer_node))
-        builder.add_node("rag_answer", wrap_node(self.rag_answer_node))
-        builder.add_node("create_quiz", wrap_node(self.create_quiz_node))
-        builder.add_node("evaluate_quiz", wrap_node(self.evaluate_quiz_node))
+        builder.add_node("planner", self.planner_node)
+        builder.add_node("retrieve", self.retrieve_node)
+        builder.add_node("direct_answer", self.direct_answer_node)
+        builder.add_node("rag_answer", self.rag_answer_node)
+        builder.add_node("create_quiz", self.create_quiz_node)
+        builder.add_node("evaluate_quiz", self.evaluate_quiz_node)
 
         builder.add_edge(START, "planner")
         builder.add_conditional_edges(

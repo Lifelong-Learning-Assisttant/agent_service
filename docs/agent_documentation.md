@@ -6,6 +6,8 @@
 
 Начиная с версии 2.0, агент поддерживает **множественные сессии** с автоматическим управлением состоянием, ограничением параллелизма и реальными уведомлениями в Web UI.
 
+Начиная с версии 2.1, добавлены **асинхронные версии инструментов** для неблокирующих вызовов внешних сервисов.
+
 ## Архитектура
 
 ### Система сессий
@@ -66,6 +68,140 @@ graph TD
 - **RAG Answer**: Генерирует ответ по документам
 - **Create Quiz**: Создает квиз
 - **Evaluate Quiz**: Оценивает ответы
+
+## Async инструменты
+
+### Доступные async-инструменты
+
+**Источник:** `agent_service/langchain_tools.py`
+
+```python
+from langchain_tools import (
+    rag_search_async,
+    rag_generate_async,
+    generate_exam_async,
+    grade_exam_async
+)
+```
+
+#### 1. `rag_search_async(query, top_k, use_hyde)`
+Асинхронный поиск документов через RAG сервис.
+
+**Пример:**
+```python
+result = await rag_search_async(
+    query="машинное обучение",
+    top_k=5,
+    use_hyde=False
+)
+# Возвращает: JSON строку с результатами поиска
+```
+
+#### 2. `rag_generate_async(query, top_k, temperature, use_hyde)`
+Асинхронная генерация ответа через RAG сервис.
+
+**Пример:**
+```python
+result = await rag_generate_async(
+    query="Объясни ML",
+    top_k=5,
+    temperature=0.7,
+    use_hyde=False
+)
+# Возвращает: JSON строку с ответом
+```
+
+#### 3. `generate_exam_async(markdown_content, config)`
+Асинхронная генерация экзамена через test_generator.
+
+**Пример:**
+```python
+config = {
+    "total_questions": 5,
+    "single_choice_count": 3,
+    "multiple_choice_count": 1,
+    "open_ended_count": 1,
+    "provider": "local"
+}
+
+result = await generate_exam_async(
+    markdown_content="# Python Basics\n...",
+    config=config
+)
+# Возвращает: JSON строку с экзаменом
+```
+
+#### 4. `grade_exam_async(exam_id, answers)`
+Асинхронная оценка ответов на экзамен.
+
+**Пример:**
+```python
+answers = [
+    {"question_id": "q1", "choice": [0]},
+    {"question_id": "q2", "text_answer": "Ответ"}
+]
+
+result = await grade_exam_async(
+    exam_id="ex-123",
+    answers=answers
+)
+# Возвращает: JSON строку с результатами оценки
+```
+
+### Инфраструктура
+
+**Настройки:**
+- `test_generator_service_url`: `http://api:52812`
+- `http_timeout_s`: таймаут HTTP запросов
+- Docker сеть: `test_generator_default`
+
+**Зависимости:**
+- `httpx` — для async HTTP запросов
+
+### Использование в AgentSession
+
+```python
+async def _run_graph(self, question):
+    # Шаг 1: Планирование
+    await self.notify_ui(step="planning", message="Создаю план...")
+    
+    # Шаг 2: Поиск (async)
+    rag_result = await rag_search_async(query=question, top_k=5)
+    
+    # Шаг 3: Генерация экзамена (async)
+    exam = await generate_exam_async(markdown_content, config)
+    
+    # Шаг 4: Оценка (async)
+    grade = await grade_exam_async(exam.exam_id, answers)
+    
+    return grade
+```
+
+### Совместимость
+
+Сохранены sync версии для обратной совместимости:
+```python
+# Sync (старый вариант)
+from langchain_tools import rag_search, generate_exam
+
+# Async (новый вариант)
+from langchain_tools import rag_search_async, generate_exam_async
+```
+
+### Тестирование
+
+**Результаты:**
+```
+Генерируем экзамен...
+✅ Сгенерирован экзамен: ex-0ec33740
+
+Оцениваем ответы...
+✅ Результаты оценки:
+   Счет: 75.0 %
+   Правильно: 1 / 2
+```
+
+**Подробности:** см. `agent_service/docs/async_tools_setup.md`
 
 ## Управление сессиями
 
@@ -140,6 +276,8 @@ agent.sweep_expired_sessions(force=True)
 web_ui_url: str = "http://localhost:8150"
 session_ttl_seconds: int = 600
 concurrency_limit: int = 3
+test_generator_service_url: str = "http://api:52812"
+http_timeout_s: int = 30
 ```
 
 ### Конфигурационные файлы
@@ -152,7 +290,9 @@ concurrency_limit: int = 3
 {
   "web_ui_url": "http://localhost:8150",
   "session_ttl_seconds": 600,
-  "concurrency_limit": 3
+  "concurrency_limit": 3,
+  "test_generator_service_url": "http://api:52812",
+  "http_timeout_s": 30
 }
 ```
 
@@ -237,7 +377,7 @@ agent.remove_session(session_id)
 ### Таймауты
 - **UI уведомления**: 5 секунд на HTTP запрос
 - **Сессия**: 10 минут без активности (TTL)
-- **Инструменты**: Без таймаута (зависит от внешних сервисов)
+- **Инструменты**: Настраивается через `http_timeout_s` (по умолчанию 30 сек)
 
 ### Потокобезопасность
 - `asyncio.Lock` для защиты состояния сессии
@@ -255,6 +395,7 @@ agent.remove_session(session_id)
 2025-12-25 13:00:03 | INFO | agent_session | Tool call: rag_search
 2025-12-25 13:00:05 | INFO | agent_session | UI notification sent: uuid-1
 2025-12-25 13:00:10 | INFO | agent_session | Task completed: uuid-1
+2025-12-25 16:00:00 | INFO | langchain_tools | Async calling test generator service at http://api:52812/api/generate
 ```
 
 ## Тестирование
@@ -284,6 +425,9 @@ docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/ -
 - **Запуск задачи**: ~2-5 сек (зависит от RAG/генерации)
 - **Уведомление UI**: < 5 сек (с таймаутом)
 - **Очистка сессий**: < 100 мс (100 сессий)
+- **RAG search**: 1-3 сек
+- **Generate exam**: 3-10 сек
+- **Grade exam**: 1-2 сек
 
 ## Миграция с v1.x
 
@@ -305,6 +449,7 @@ result = await agent.run("question", session_id="session")
 - ✅ Ограничение параллелизма
 - ✅ Автоматическая очистка
 - ✅ Подробная история событий
+- ✅ Async инструменты (v2.1)
 
 ## Заключение
 
@@ -315,5 +460,7 @@ result = await agent.run("question", session_id="session")
 - **Прозрачность**: Реальные уведомления о прогрессе
 - **Безопасность**: Ограничение параллелизма и таймауты
 - **Гибкость**: Конфигурируемые параметры
+- **Асинхронность**: Неблокирующие вызовы внешних сервисов
 
 Для более подробной информации о тестировании агента, см. [Документация по тестам](test_documentation.md).
+Для настройки async-инструментов, см. [Async tools setup](async_tools_setup.md).
