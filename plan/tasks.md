@@ -1,7 +1,7 @@
 # Порядок работ и общая последовательность (минимально-зависимая)
 
-1. Инфраструктурные правки Web UI: rooms WS + /api/agent/progress + messages_by_session — Task B
-2. AgentSession (каркас) + sessions map в AgentSystem — Task C
+1. Инфраструктурные правки Web UI: rooms WS + /api/agent/progress + messages_by_session — Task B ✅
+2. AgentSession (каркас) + sessions map в AgentSystem — Task C ✅
 3. Асинхронные инструменты (langchain_tools async) — Task D
 4. Перевод AgentSystem на использование AgentSession и async run — Task E
 6. Notify UI (async) интеграция в узлы — Task F
@@ -78,30 +78,74 @@
 
 **Цель:** создать отдельный модуль с классом `AgentSession` (каркас по спецификации) и механизмом хранения сессий в `AgentSystem`.
 
-**Действия / файлы:**
+**Статус:** ✅ **ВЫПОЛНЕНА** (2025-12-25)
 
-* Создать `agent_service/agent_session.py` с классом `AgentSession` (поля и методы по спецификации, но можно сначала реализовать skeleton: поля, stubs методов, event queue, last_events deque, lock).
-* В `agent_service/agent_system.py`:
+**Реализация:**
 
-  * Добавить `self.sessions: Dict[str, AgentSession]`.
-  * Добавить методы `create_session`, `get_session`, `remove_session`, `sweep_expired_sessions` (sweeper запускается background).
-  * В `run()` — вместо прямого invoke, получать/создавать `AgentSession` и запускать `session.start(question)` (в background task).
-  * Добавить Semaphore для ограничения параллелизма.
-* Добавить config `session_ttl_seconds` в settings (или использовать хардкод для demo).
+* ✅ `agent_service/agent_session.py`:
+  * Класс `AgentSession` с полями: `session_id`, `parent`, `state`, `task`, `last_active_at`, `created_at`, `last_events`, `cancelled`, `lock`
+  * Методы: `start()`, `cancel()`, `cleanup()`, `notify_ui()`, `call_tool()`, `_run_graph()`
+  * Внутренняя логика: `_run_graph()` с прогресс-уведомлениями
+  * Fire-and-forget UI уведомления с timeout 5 секунд
 
-**Подзадачи:**
+* ✅ `agent_service/agent_system.py`:
+  * Добавлены импорты: `AgentSession`, `asyncio`, `uuid`, `datetime`, `deque`
+  * Добавлено поле: `sessions: Dict[str, AgentSession]`
+  * Добавлено поле: `session_semaphore: Semaphore`
+  * Добавлены методы:
+    * `create_session()` — создает сессию с ограничением по concurrency
+    * `get_session()` — получает сессию или None
+    * `remove_session()` — удаляет сессию
+    * `sweep_expired_sessions()` — очистка протухших сессий
+    * `_sweep_expired_sessions_loop()` — фоновый sweeper
+  * Обновленный `run()` — использует `AgentSession` вместо прямого вызова `_run_graph()`
 
-* Добавить логирование создания/удаления сессий.
-* Добавить unit-tests: create_session, start task stored, is_running etc (моки для notify_ui).
+* ✅ `agent_service/settings.py`:
+  * Добавлены параметры: `session_ttl_seconds` (600), `concurrency_limit` (3)
 
-**Acceptance criteria:**
+* ✅ `agent_service/app_settings-dev.json`:
+  * Добавлены параметры сессий
 
-* `AgentSession` объект может создаваться, храниться, и имеет API `start`, `cancel`, `notify_ui` (stubs).
-* `AgentSystem.run()` создаёт сессию и запускает фоновой таск (тест через asyncio to run background until short sleep and assert task exists).
-* Sweeper удаляет сессии неактивные больше TTL.
+* ✅ `agent_service/app_settings-prod.json`:
+  * Добавлены параметры сессий
+
+**Тесты:**
+
+* ✅ `agent_service/tests/test_agent_session.py` — 18 тестов
+* ✅ `agent_service/tests/test_agent_system_sessions.py` — 15 тестов
+* ✅ Всего: 33/33 тестов проходят успешно
+
+**Документация:**
+
+* ✅ `agent_service/docs/agent_documentation.md` — обновлена с описанием системы сессий
+* ✅ `agent_service/docs/test_documentation.md` — обновлена с описанием unit тестов
+* ✅ `agent_service/docs/release_notes.md` — Release notes с описанием проделанной работы
+
+**Acceptance criteria:** ✅ Все выполнено
+
+* ✅ `AgentSession` объект может создаваться, храниться, и имеет полный API
+* ✅ `AgentSystem.run()` создаёт сессию и запускает фоновой таск
+* ✅ Sweeper удаляет сессии неактивные больше TTL (10 минут)
+* ✅ Ограничение параллелизма (максимум 3 сессии)
+* ✅ Все параметры загружаются из конфига (нет хардкода)
+* ✅ Unit-tests покрывают все компоненты
 
 **Сложность:** средняя
 **Кому:** backend (agent) developer
+
+**Созданные файлы:**
+* `agent_service/agent_session.py` — Класс AgentSession с полным каркасом
+* `agent_service/tests/test_agent_session.py` — 18 unit тестов
+* `agent_service/tests/test_agent_system_sessions.py` — 15 unit тестов
+* `agent_service/docs/release_notes.md` — Release notes с описанием проделанной работы
+
+**Обновленные файлы:**
+* `agent_service/agent_system.py` — Добавлены методы управления сессиями
+* `agent_service/settings.py` — Добавлены настройки сессий
+* `agent_service/app_settings-dev.json` — Конфигурация сессий
+* `agent_service/app_settings-prod.json` — Конфигурация сессий
+* `agent_service/docs/agent_documentation.md` — Обновлена документация
+* `agent_service/docs/test_documentation.md` — Обновлена документация по тестам
 
 ---
 

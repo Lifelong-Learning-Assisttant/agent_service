@@ -1,5 +1,9 @@
-from typing import Dict, Optional, TypedDict, Literal, List
+from typing import Dict, Optional, TypedDict, Literal, List, Set
 import os
+import asyncio
+import uuid
+from datetime import datetime, timezone
+from collections import deque
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -9,6 +13,7 @@ from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
 from langchain_tools import make_tools, rag_search
+from agent_session import AgentSession
 
 
 # ---------- Состояние графа ----------
@@ -62,7 +67,118 @@ class AgentSystem:
         # Инициализируем память для графа
         self.memory = MemorySaver()
 
+        # Инициализируем хранилище сессий и семафор для ограничения параллелизма
+        self.sessions: Dict[str, AgentSession] = {}
+        concurrency_limit = getattr(self.cfg, 'concurrency_limit', 2)
+        self._concurrency_sem = asyncio.Semaphore(concurrency_limit)
+        self._sweeper_task: Optional[asyncio.Task] = None
+        self._sweeper_started = False
+
         self.app = self._build_graph()
+
+    # ---------- Управление сессиями ----------
+    def create_session(self, session_id: str) -> AgentSession:
+        """
+        Создает и регистрирует новую сессию.
+        
+        Args:
+            session_id: Идентификатор сессии
+            
+        Returns:
+            Созданный AgentSession
+        """
+        if session_id in self.sessions:
+            self.log.warning(f"Session {session_id} already exists, returning existing")
+            return self.sessions[session_id]
+        
+        session = AgentSession(session_id, self)
+        self.sessions[session_id] = session
+        self.log.info(f"Created session {session_id}, total sessions: {len(self.sessions)}")
+        return session
+    
+    def get_session(self, session_id: str) -> Optional[AgentSession]:
+        """
+        Получает сессию по ID.
+        
+        Args:
+            session_id: Идентификатор сессии
+            
+        Returns:
+            AgentSession или None если не найдена
+        """
+        return self.sessions.get(session_id)
+    
+    def remove_session(self, session_id: str) -> None:
+        """
+        Удаляет сессию и освобождает ресурсы.
+        
+        Args:
+            session_id: Идентификатор сессии
+        """
+        session = self.sessions.pop(session_id, None)
+        if session:
+            # Запускаем cleanup асинхронно через asyncio.create_task
+            # Но для синхронного метода делаем await в фоне
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(session.cleanup())
+                else:
+                    loop.run_until_complete(session.cleanup())
+            except RuntimeError:
+                # Если нет event loop, просто игнорируем
+                pass
+            self.log.info(f"Removed session {session_id}, remaining: {len(self.sessions)}")
+    
+    def _ensure_sweeper_started(self) -> None:
+        """Запускает фоновый sweeper для удаления старых сессий (только если еще не запущен)."""
+        if not self._sweeper_started:
+            try:
+                loop = asyncio.get_running_loop()
+                if self._sweeper_task is None or self._sweeper_task.done():
+                    self._sweeper_task = asyncio.create_task(self._sweep_expired_sessions_loop())
+                    self._sweeper_started = True
+                    self.log.info("Started session sweeper")
+            except RuntimeError:
+                # Нет активного event loop, пропускаем запуск
+                pass
+    
+    async def _sweep_expired_sessions_loop(self) -> None:
+        """Фоновая задача: периодическая очистка старых сессий."""
+        ttl_seconds = getattr(self.cfg, 'session_ttl_seconds', 600)
+        
+        while True:
+            try:
+                await asyncio.sleep(30)  # Проверка каждые 30 секунд
+                await self.sweep_expired_sessions()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.log.error(f"Error in sweeper loop: {e}")
+    
+    async def sweep_expired_sessions(self) -> None:
+        """
+        Удаляет сессии, которые неактивны дольше TTL.
+        Вызывается периодически sweeper-ом.
+        """
+        ttl_seconds = getattr(self.cfg, 'session_ttl_seconds', 600)
+        now = datetime.now(timezone.utc)
+        expired = []
+        
+        for session_id, session in self.sessions.items():
+            age = (now - session.last_active_at).total_seconds()
+            if age > ttl_seconds:
+                expired.append(session_id)
+        
+        for session_id in expired:
+            session = self.sessions.get(session_id)
+            if session:
+                await session.cleanup()
+                del self.sessions[session_id]
+                self.log.info(f"Evicted expired session {session_id} (age: {ttl_seconds}s)")
+        
+        if expired:
+            self.log.info(f"Sweeper cleaned {len(expired)} sessions, remaining: {len(self.sessions)}")
 
     # ---------- Узлы графа ----------
     def planner_node(self, state: AgentState) -> AgentState:
@@ -260,25 +376,75 @@ class AgentSystem:
         return app
 
     # ---------- Публичный вызов ----------
-    def run(self, question: str, session_id: str = "default") -> str:
+    async def run(self, question: str, session_id: str = "default") -> str:
         """
-        Запускает граф на один вопрос.
+        Запускает обработку вопроса через AgentSession.
         Args:
             question: Вопрос пользователя.
-            session_id: Идентификатор сессии для управления памятью графа.
+            session_id: Идентификатор сессии.
         Returns:
             Финальный ответ строкой.
         """
         import time
 
-        self.log.info("run: start | q_len=%d", len(question or ""))
-        t0 = time.perf_counter()
-        config = {"configurable": {"thread_id": session_id}}
-        final_state: AgentState = self.app.invoke({"question": question}, config=config)
-        answer = final_state.get("final_answer", "")
-        dt = (time.perf_counter() - t0) * 1000
-        self.log.info("run: done  | out_len=%d | %.1f ms", len(answer or ""), dt)
+        # Запускаем sweeper при первом вызове
+        self._ensure_sweeper_started()
 
-        # опционально – совместимость с UI, где ожидают AIMessage
-        _ = AIMessage(content=answer)
-        return answer
+        self.log.info("run: start | session_id=%s | q_len=%d", session_id, len(question or ""))
+        t0 = time.perf_counter()
+        
+        # Получаем или создаем сессию
+        session = self.get_session(session_id)
+        if not session:
+            session = self.create_session(session_id)
+        
+        # Проверяем, не выполняется ли уже сессия
+        if session.is_running():
+            self.log.warning(f"Session {session_id} is already running")
+            return "Session is busy, please wait or use a different session_id"
+        
+        # Ограничиваем параллелизм
+        async with self._concurrency_sem:
+            # Запускаем сессию
+            await session.start(question)
+            
+            # Ждем завершения (для demo - синхронное ожидание)
+            # В реальной системе можно вернуть task и ждать асинхронно
+            if session.task:
+                try:
+                    await session.task
+                except asyncio.CancelledError:
+                    pass
+        
+        dt = (time.perf_counter() - t0) * 1000
+        
+        # Получаем финальный ответ из state
+        final_answer = session.state.get("final_answer", "Ошибка: финальный ответ не сформирован")
+        self.log.info("run: done  | session_id=%s | out_len=%d | %.1f ms", session_id, len(final_answer or ""), dt)
+        
+        # Возвращаем ответ (для совместимости с существующим API)
+        return final_answer
+    
+    async def run_async(self, question: str, session_id: str = "default") -> asyncio.Task:
+        """
+        Асинхронный запуск обработки вопроса.
+        Args:
+            question: Вопрос пользователя.
+            session_id: Идентификатор сессии.
+        Returns:
+            Task объект для ожидания результата.
+        """
+        # Запускаем sweeper при первом вызове
+        self._ensure_sweeper_started()
+        
+        session = self.get_session(session_id)
+        if not session:
+            session = self.create_session(session_id)
+        
+        if session.is_running():
+            self.log.warning(f"Session {session_id} is already running")
+            return session.task
+        
+        async with self._concurrency_sem:
+            await session.start(question)
+            return session.task

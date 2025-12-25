@@ -21,14 +21,9 @@ args, unknown = parser.parse_known_args()
 import os
 os.environ["APP_SETTINGS_PATH"] = os.path.abspath(args.settings)
 
-# Загрузка настроек
-try:
-    with open(args.settings, "r") as f:
-        settings = json.load(f)
-    AGENT_PORT = settings.get("agent_port", 8250)
-except FileNotFoundError:
-    # Используем переменную окружения, если файл настроек отсутствует
-    AGENT_PORT = int(os.getenv("AGENT_PORT", "8250"))
+# Загрузка настроек через settings
+cfg = get_settings()
+AGENT_PORT = cfg.agent_port if hasattr(cfg, 'agent_port') else 8250
 
 # Создание приложения FastAPI
 app = FastAPI()
@@ -54,7 +49,7 @@ async def run_agent(request: AgentRequest):
     Запускает агента для обработки вопроса.
     """
     try:
-        answer = agent.run(request.question, request.session_id)
+        answer = await agent.run(request.question, request.session_id)
         return AgentResponse(
             answer=answer,
             session_id=request.session_id,
@@ -78,10 +73,30 @@ async def end_session(session_id: Optional[str] = "default"):
     Завершает сессию агента.
     """
     try:
-        # Здесь можно добавить логику для завершения сессии, если это необходимо
+        session = agent.get_session(session_id)
+        if session:
+            await session.cancel()
+            agent.remove_session(session_id)
         return {"status": "success", "message": "Session ended", "session_id": session_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Эндпоинт для получения списка активных сессий
+@app.get("/api/agent/sessions")
+async def get_sessions():
+    """
+    Возвращает список активных сессий.
+    """
+    sessions_info = []
+    for session_id, session in agent.sessions.items():
+        sessions_info.append({
+            "session_id": session_id,
+            "is_running": session.is_running(),
+            "created_at": session.created_at.isoformat(),
+            "last_active_at": session.last_active_at.isoformat(),
+            "age_seconds": session.get_age_seconds()
+        })
+    return {"sessions": sessions_info}
 
 # Запуск приложения
 if __name__ == "__main__":

@@ -16,4 +16,5 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "httpx",
     "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
 ]
