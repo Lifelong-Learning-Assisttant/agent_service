@@ -170,7 +170,7 @@ class AgentSession:
     async def notify_ui(self, step: str, message: str, tool: Optional[str] = None,
                        level: str = "info", meta: Optional[Dict[str, Any]] = None) -> None:
         """
-        Отправляет progress-событие в Web UI.
+        Отправляет progress-событие в Web UI Backend.
         
         Args:
             step: Тип шага (start_run, intent_determined и т.д.)
@@ -198,14 +198,14 @@ class AgentSession:
         
         self.log.info(f"notify_ui: step={step}, session={self.session_id}, msg={message[:50]}...")
         
-        # Отправляем в Web UI (fire-and-forget)
+        # Отправляем в Web UI Backend (fire-and-forget)
         try:
-            web_ui_url = self.cfg.web_ui_url
-            if not web_ui_url:
-                self.log.warning(f"Web UI URL not configured, skipping notification for session {self.session_id}")
+            backend_url = self.cfg.web_ui_backend_url
+            if not backend_url:
+                self.log.warning(f"Backend URL not configured, skipping notification for session {self.session_id}")
                 return
             
-            url = f"{web_ui_url}/api/agent/progress"
+            url = f"{backend_url}/api/agent/progress"
             
             async with httpx.AsyncClient(timeout=1.0) as client:
                 response = await client.post(url, json=event)
