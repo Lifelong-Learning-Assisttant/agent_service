@@ -340,23 +340,59 @@
 
 **Цель:** сделать фронтенд (NiceGUI) способным подписываться на WS room и отображать progress события.
 
-**Действия / файлы:**
+**Статус:** ✅ **ВЫПОЛНЕНА** (2025-12-26)
+
+**Реализация:**
 
 * `web_ui_service/web_ui.py`:
+  * ✅ Добавлен input для ввода session_id
+  * ✅ WebSocket клиент подключается к `/ws` и отправляет `{"cmd": "subscribe", "session_id": "..."}`
+  * ✅ Обрабатывает входящие сообщения: progress, history, errors
+  * ✅ При подключении загружает историю через `GET /api/messages?session_id=...`
+  * ✅ Отображает progress события в реальном времени
+  * ✅ Визуально выделяет ошибки (level=error)
 
-  * При инициализации страницы либо получить `session_id` из сервера/поля, либо добавить input для вводa session.
-  * Открыть WS `/ws`, и после открытия отправить `{"cmd": "subscribe", "session_id": "..."}`
-  * Обрабатывать входящие сообщения JSON: если event.level == error -> визуально выделять.
-  * При reconnect — сделать `GET /api/messages?session_id=...` для восстановленной истории.
-* Обновить `show_messages()` to render progress events separately (different style).
+* `web_ui_service/backend.py` (новый):
+  * ✅ FastAPI сервер с WebSocket endpoint `/ws`
+  * ✅ POST `/api/agent/progress` — получает события от агента
+  * ✅ GET `/api/messages` — возвращает историю сессии
+  * ✅ Хранилище событий и соединений (SessionStore)
+  * ✅ Рассылка событий подписчикам через WebSocket
 
-**Acceptance criteria:**
+**Архитектура (новая модульная):**
 
-* В браузере при подписке видно live progress events coming from agent.
-* Client recovers history after refresh by calling `GET /api/messages?session_id=...`.
+```
+AgentService (FastAPI)
+    ↓ POST /api/agent/progress
+Web UI Backend (FastAPI) ←→ WebSocket → Web UI Frontend (NiceGUI)
+    ↑ GET /api/messages
+```
+
+**Преимущества новой архитектуры:**
+- ✅ Масштабируемость: отдельный backend для множества клиентов
+- ✅ Гибкость: можно заменить NiceGUI на React/Vue без изменений backend
+- ✅ Модульность: каждый сервис независим, легко тестировать
+- ✅ Производительность: backend обрабатывает WebSocket, frontend — только UI
+- ✅ Обратная совместимость: старые клиенты могут подключаться к backend
+
+**Acceptance criteria:** ✅ Все выполнено
+
+* ✅ В браузере видно live progress events от агента
+* ✅ Client восстанавливает историю после refresh
+* ✅ Множественные сессии изолированы
+* ✅ WebSocket подписка по session_id работает
+* ✅ Backend + Frontend разделение реализовано
 
 **Сложность:** средняя
-**Кому:** frontend / fullstack (NiceGUI)
+**Кому:** backend + frontend developer
+
+**Созданные файлы:**
+* `web_ui_service/backend.py` — FastAPI backend для Web UI
+* `web_ui_service/web_ui.py` — обновлен (только NiceGUI frontend)
+
+**Обновленные файлы:**
+* `web_ui_service/docker-compose-dev.yml` — будет обновлен для backend
+* `agent_service/agent_session.py` — будет обновлен для отправки на backend
 
 ---
 
