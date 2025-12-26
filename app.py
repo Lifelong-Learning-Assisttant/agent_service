@@ -42,6 +42,10 @@ class AgentRequest(BaseModel):
     question: str
     session_id: Optional[str] = "default"
 
+# Модель для запросов без вопроса (очистка, завершение, отмена)
+class SessionRequest(BaseModel):
+    session_id: Optional[str] = "default"
+
 # Модель для ответа
 class AgentResponse(BaseModel):
     answer: str
@@ -80,21 +84,29 @@ async def run_agent(request: AgentRequest):
 async def get_messages(session_id: str = "default"):
     """
     Возвращает историю сообщений для сессии.
+    Формат: [{"role": "user"|"agent"|"system", "content": "..."}, ...]
     """
     try:
         session = agent.get_session(session_id)
         if not session:
             return {"messages": [], "session_id": session_id}
         
-        # Возвращаем историю в формате (author, text)
+        # Возвращаем историю в формате {"role": "...", "content": "..."}
         messages = []
         for event in session.last_events:
             if event["step"] == "final_answer":
-                messages.append(("Agent", event["meta"].get("final_answer", "")))
+                # Финальный ответ агента
+                final_answer = event["meta"].get("final_answer", "")
+                if final_answer:
+                    messages.append({"role": "agent", "content": final_answer})
             elif event["step"] == "start_run":
-                messages.append(("User", event["meta"].get("question", "")))
+                # Вопрос пользователя
+                question = event["meta"].get("question", "")
+                if question:
+                    messages.append({"role": "user", "content": question})
             elif event["level"] == "info":
-                messages.append(("System", event["message"]))
+                # Системное сообщение о прогрессе
+                messages.append({"role": "system", "content": event["message"]})
         
         return {"messages": messages, "session_id": session_id}
     except Exception as e:
@@ -132,13 +144,48 @@ async def get_sessions():
         })
     return {"sessions": sessions_info}
 
+# Эндпоинт для отмены сессии
+@app.post("/api/session/cancel")
+async def cancel_session(request: SessionRequest):
+    """
+    Отменяет текущую задачу сессии.
+    """
+    try:
+        session_id = request.session_id
+        session = agent.get_session(session_id)
+        if session:
+            await session.cancel()
+        return {"status": "cancelled", "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Эндпоинт для очистки истории сессии
+@app.post("/api/agent/clear_session")
+async def clear_session(request: SessionRequest):
+    """
+    Очищает историю сообщений сессии.
+    """
+    try:
+        session_id = request.session_id
+        session = agent.get_session(session_id)
+        if session:
+            # Очищаем историю событий
+            session.last_events.clear()
+            # Сбрасываем состояние
+            session.state = {}
+            session.touch()
+        return {"status": "success", "message": "Session history cleared", "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Эндпоинт для завершения сессии
 @app.post("/api/agent/end_session")
-async def end_session(session_id: Optional[str] = "default"):
+async def end_session(request: SessionRequest):
     """
     Завершает сессию агента.
     """
     try:
+        session_id = request.session_id
         session = agent.get_session(session_id)
         if session:
             await session.cancel()
