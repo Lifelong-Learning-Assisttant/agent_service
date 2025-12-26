@@ -84,6 +84,7 @@ class LLMSettings(BaseSettings):
     # ---- Session management ----
     session_ttl_seconds: int = Field(default=600)  # TTL для сессий в секундах (10 минут по умолчанию)
     web_ui_url: str = Field(default="http://localhost:8150")  # URL Web UI для отправки progress-событий
+    web_ui_backend_url: str = Field(default="http://localhost:8351")  # URL Web UI Backend для отправки progress-событий
     concurrency_limit: int = Field(default=2)  # Максимальное количество параллельных сессий
 
     def __init__(self, **kwargs):

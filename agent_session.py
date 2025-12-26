@@ -142,7 +142,7 @@ class AgentSession:
                 message="Задача завершена",
                 tool="agent",
                 level="info",
-                meta={"final_length": len(final_answer)}
+                meta={"final_answer": final_answer, "final_length": len(final_answer)}
             )
             
             self.log.info(f"Session {self.session_id} completed successfully")
