@@ -189,7 +189,7 @@ class AgentSystem:
         import time
 
         q = (state.get("question") or "").strip()
-        self.log.info("start:planner | question_len=%d", len(q))
+        self.log.info("start:planner | question_len=%d | session=%s", len(q), session is not None)
         t0 = time.perf_counter()
 
         # Уведомление о начале
@@ -200,6 +200,8 @@ class AgentSystem:
                 tool="planner",
                 level="info"
             )
+        else:
+            self.log.warning("planner_node: session is None!")
 
         # Определяем намерение на основе запроса
         intent = self._determine_intent(q)
@@ -481,6 +483,7 @@ class AgentSystem:
                 session = None
                 if config and "configurable" in config:
                     session = config["configurable"].get("session")
+                self.log.debug(f"wrap_node: {node_func.__name__}, session={session is not None}")
                 return await node_func(state, session)
             return wrapped_node
         

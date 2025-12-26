@@ -167,7 +167,7 @@ class AgentSession:
         finally:
             self.touch()
     
-    async def notify_ui(self, step: str, message: str, tool: Optional[str] = None, 
+    async def notify_ui(self, step: str, message: str, tool: Optional[str] = None,
                        level: str = "info", meta: Optional[Dict[str, Any]] = None) -> None:
         """
         Отправляет progress-событие в Web UI.
@@ -196,6 +196,8 @@ class AgentSession:
             self.last_events.append(event)
             self.touch()
         
+        self.log.info(f"notify_ui: step={step}, session={self.session_id}, msg={message[:50]}...")
+        
         # Отправляем в Web UI (fire-and-forget)
         try:
             web_ui_url = self.cfg.web_ui_url
@@ -206,7 +208,8 @@ class AgentSession:
             url = f"{web_ui_url}/api/agent/progress"
             
             async with httpx.AsyncClient(timeout=1.0) as client:
-                await client.post(url, json=event)
+                response = await client.post(url, json=event)
+                self.log.info(f"notify_ui: sent to {url}, status={response.status_code}")
         except Exception as e:
             # Fire-and-forget: логируем, но не поднимаем исключение
             self.log.warning(f"Failed to notify UI for session {self.session_id}: {e}")

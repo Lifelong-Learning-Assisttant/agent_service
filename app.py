@@ -5,9 +5,12 @@ FastAPI приложение для агента.
 
 import argparse
 import json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
+import asyncio
+import uuid
+from datetime import datetime, timezone
 
 from agent_system import AgentSystem
 from settings import get_settings
@@ -31,6 +34,9 @@ app = FastAPI()
 # Инициализация агента
 agent = AgentSystem()
 
+# Хранилище WebSocket соединений по session_id
+ws_connections: Dict[str, List[WebSocket]] = {}
+
 # Модель для запроса
 class AgentRequest(BaseModel):
     question: str
@@ -41,6 +47,17 @@ class AgentResponse(BaseModel):
     answer: str
     session_id: str
     status: str
+
+# Модель для прогресс-события
+class ProgressEvent(BaseModel):
+    event_id: str
+    session_id: str
+    step: str
+    tool: Optional[str] = None
+    message: str
+    level: str
+    ts: str
+    meta: Optional[Dict[str, Any]] = None
 
 # Эндпоинт для запуска агента
 @app.post("/api/agent/run")
@@ -58,26 +75,43 @@ async def run_agent(request: AgentRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Эндпоинт для проверки состояния агента
-@app.get("/api/agent/status")
-async def get_agent_status():
+# Эндпоинт для получения истории сообщений
+@app.get("/api/messages")
+async def get_messages(session_id: str = "default"):
     """
-    Возвращает статус агента.
-    """
-    return {"status": "ready"}
-
-# Эндпоинт для завершения сессии
-@app.post("/api/agent/end_session")
-async def end_session(session_id: Optional[str] = "default"):
-    """
-    Завершает сессию агента.
+    Возвращает историю сообщений для сессии.
     """
     try:
         session = agent.get_session(session_id)
-        if session:
-            await session.cancel()
-            agent.remove_session(session_id)
-        return {"status": "success", "message": "Session ended", "session_id": session_id}
+        if not session:
+            return {"messages": [], "session_id": session_id}
+        
+        # Возвращаем историю в формате (author, text)
+        messages = []
+        for event in session.last_events:
+            if event["step"] == "final_answer":
+                messages.append(("Agent", event["meta"].get("final_answer", "")))
+            elif event["step"] == "start_run":
+                messages.append(("User", event["meta"].get("question", "")))
+            elif event["level"] == "info":
+                messages.append(("System", event["message"]))
+        
+        return {"messages": messages, "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Эндпоинт для получения прогресс-событий (polling)
+@app.get("/api/agent/progress")
+async def get_progress(session_id: str = "default"):
+    """
+    Возвращает последние прогресс-события для сессии.
+    """
+    try:
+        session = agent.get_session(session_id)
+        if not session:
+            return {"events": [], "session_id": session_id}
+        
+        return {"events": list(session.last_events), "session_id": session_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -97,6 +131,118 @@ async def get_sessions():
             "age_seconds": session.get_age_seconds()
         })
     return {"sessions": sessions_info}
+
+# Эндпоинт для завершения сессии
+@app.post("/api/agent/end_session")
+async def end_session(session_id: Optional[str] = "default"):
+    """
+    Завершает сессию агента.
+    """
+    try:
+        session = agent.get_session(session_id)
+        if session:
+            await session.cancel()
+            agent.remove_session(session_id)
+        return {"status": "success", "message": "Session ended", "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# WebSocket endpoint для подписки на события
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket для получения real-time событий прогресса.
+    """
+    await websocket.accept()
+    session_id = None
+    
+    try:
+        # Ожидаем сообщение подписки
+        data = await websocket.receive_json()
+        if data.get("cmd") == "subscribe":
+            session_id = data.get("session_id")
+            if not session_id:
+                await websocket.send_json({"type": "error", "message": "session_id required"})
+                await websocket.close()
+                return
+            
+            # Добавляем соединение в хранилище
+            if session_id not in ws_connections:
+                ws_connections[session_id] = []
+            ws_connections[session_id].append(websocket)
+            
+            # Подтверждаем подписку
+            await websocket.send_json({
+                "type": "subscribed",
+                "session_id": session_id,
+                "message": f"Subscribed to session {session_id}"
+            })
+            
+            # Ждем отключения
+            while True:
+                try:
+                    data = await websocket.receive_json()
+                    # Обработка входящих сообщений (например, unsubscribe)
+                    if data.get("cmd") == "unsubscribe":
+                        break
+                except WebSocketDisconnect:
+                    break
+                except Exception:
+                    # Игнорируем ошибки парсинга
+                    pass
+    except Exception as e:
+        pass
+    finally:
+        # Удаляем соединение при отключении
+        if session_id and session_id in ws_connections:
+            if websocket in ws_connections[session_id]:
+                ws_connections[session_id].remove(websocket)
+            if not ws_connections[session_id]:
+                del ws_connections[session_id]
+
+# Эндпоинт для получения прогресс-событий от агента (вызывается из AgentSession.notify_ui)
+@app.post("/api/agent/progress")
+async def receive_progress(event: ProgressEvent):
+    """
+    Получает прогресс-событие от агента и рассылает подписчикам.
+    """
+    try:
+        # Преобразуем в формат для WebSocket
+        ws_message = {
+            "type": "progress",
+            "step": event.step,
+            "details": event.message,
+            "session_id": event.session_id,
+            "tool": event.tool,
+            "level": event.level,
+            "meta": event.meta
+        }
+        
+        # Отправляем всем подписчикам этой сессии
+        if event.session_id in ws_connections:
+            disconnected = []
+            for ws in ws_connections[event.session_id]:
+                try:
+                    await ws.send_json(ws_message)
+                except Exception:
+                    disconnected.append(ws)
+            
+            # Удаляем отключенных
+            for ws in disconnected:
+                if ws in ws_connections[event.session_id]:
+                    ws_connections[event.session_id].remove(ws)
+        
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Эндпоинт для проверки состояния агента
+@app.get("/api/agent/status")
+async def get_agent_status():
+    """
+    Возвращает статус агента.
+    """
+    return {"status": "ready"}
 
 # Запуск приложения
 if __name__ == "__main__":
