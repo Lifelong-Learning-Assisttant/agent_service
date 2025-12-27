@@ -314,6 +314,7 @@ class AgentSystem:
         """
         import time
         import json
+        import os
 
         q = (state.get("question") or "").strip()
         self.log.info("start:rag_answer | q_len=%d", len(q))
@@ -335,19 +336,45 @@ class AgentSystem:
         try:
             result_data = json.loads(result)
             if isinstance(result_data, dict) and "error" in result_data:
-                answer = f"Ошибка RAG: {result_data['error']}"
+                raw_answer = f"Ошибка RAG: {result_data['error']}"
             elif isinstance(result_data, dict) and "answer" in result_data:
-                answer = result_data["answer"]
+                raw_answer = result_data["answer"]
             else:
-                answer = str(result_data)
+                raw_answer = str(result_data)
         except:
-            answer = "Ошибка при обработке ответа от RAG сервиса"
+            raw_answer = "Ошибка при обработке ответа от RAG сервиса"
+
+        # Логируем полученный ответ для отладки
+        self.log.info("RAG raw answer: %s", raw_answer[:200] + "..." if len(raw_answer) > 200 else raw_answer)
+
+        # Уведомление о переформатировании
+        if session:
+            await session.notify_ui(
+                step="start_reformatting",
+                message="Переформатирование ответа с правильными формулами",
+                tool="llm_reformat",
+                level="info"
+            )
+
+        # Загружаем промпт для переформатирования
+        reformat_prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "reformat_latex.txt")
+        with open(reformat_prompt_path, "r", encoding="utf-8") as f:
+            reformat_prompt_template = f.read().strip()
+        
+        # Формируем промпт для LLM
+        reformat_prompt = reformat_prompt_template + "\n\n" + raw_answer
+        
+        # Используем LLM для переформатирования
+        answer = self.client.generate([reformat_prompt], temperature=0.1)[0]
+        
+        # Логируем результат переформатирования
+        self.log.info("Reformatted answer: %s", answer[:200] + "..." if len(answer) > 200 else answer)
 
         # Уведомление об успехе
         if session:
             await session.notify_ui(
                 step="rag_answer_done",
-                message="Ответ на основе RAG сгенерирован",
+                message="Ответ на основе RAG сгенерирован и отформатирован",
                 tool="rag_generate",
                 level="info",
                 meta={"length": len(answer)}
