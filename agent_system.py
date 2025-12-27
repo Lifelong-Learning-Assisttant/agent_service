@@ -309,10 +309,11 @@ class AgentSystem:
 
     async def rag_answer_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Генерирует ответ на основе документов.
+        Генерирует ответ на основе документов через RAG сервис.
         Отправляет уведомления в UI.
         """
         import time
+        import json
 
         q = (state.get("question") or "").strip()
         self.log.info("start:rag_answer | q_len=%d", len(q))
@@ -327,9 +328,20 @@ class AgentSystem:
                 level="info"
             )
 
-        context = "\n".join(state.get("documents", []))
-        prompt = f"Context: {context}. Question: {q}"
-        answer = self.client.generate([prompt], temperature=0.2)[0]
+        # Используем RAG сервис для генерации ответа
+        result = await rag_generate_async(q)
+        
+        # Парсим JSON результат
+        try:
+            result_data = json.loads(result)
+            if isinstance(result_data, dict) and "error" in result_data:
+                answer = f"Ошибка RAG: {result_data['error']}"
+            elif isinstance(result_data, dict) and "answer" in result_data:
+                answer = result_data["answer"]
+            else:
+                answer = str(result_data)
+        except:
+            answer = "Ошибка при обработке ответа от RAG сервиса"
 
         # Уведомление об успехе
         if session:
@@ -448,22 +460,55 @@ class AgentSystem:
             return "rag_answer"
 
     def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
-        """Определяет намерение пользователя с использованием LLM."""
-        prompt = (
-            "Определи намерение пользователя. Возможные варианты:\n"
-            "1. general - если пользователь хочет просто поговорить или задать общий вопрос.\n"
-            "2. rag_answer - если пользователь хочет получить ответ на основе учебника Яндекса по машинному обучению.\n"
-            "3. generate_quiz - если пользователь хочет пройти квиз на основе учебника Яндекса.\n"
-            "4. evaluate_quiz - если пользователь хочет оценить результаты прохождения квиза. результаты прохождения берем из памяти\n"
-            f"Вопрос: {question}\n"
-            "Выбери наиболее подходящий вариант: general, rag_answer, generate_quiz или evaluate_quiz."
-        )
-        intent = self.client.generate([prompt], temperature=0.1)[0].strip().lower()
+        """Определяет намерение пользователя с использованием LLM через PydanticOutputParser для гарантированного вывода."""
+        from pydantic import BaseModel, Field
+        from langchain_core.messages import HumanMessage
+        from typing import Literal
+        import os
         
-        # Приводим к правильному типу
-        if intent in ["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
-            return intent
+        # Определяем Pydantic модель для структурированного вывода
+        class IntentModel(BaseModel):
+            """Модель намерения пользователя."""
+            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"] = Field(
+                description="Намерение пользователя: general для общих вопросов, rag_answer для ответов из учебника, generate_quiz для создания квиза, evaluate_quiz для оценки результатов"
+            )
+        
+        # Загружаем промпт из файла
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "intent_determination.txt")
+        if os.path.exists(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                base_prompt = f.read().strip()
         else:
+            # Если файл не найден, используем промпт по умолчанию
+            base_prompt = (
+                "Определи намерение пользователя. Возможные варианты:\n"
+                "1. rag_answer - если пользователь задает вопрос по машинному обучению, глубокому обучению, нейронным сетям, ML, DL, AI, или упоминает учебник Яндекса.\n"
+                "2. generate_quiz - если пользователь хочет пройти квиз, тест, викторину.\n"
+                "3. evaluate_quiz - если пользователь хочет оценить результаты прохождения квиза. Результаты прохождения берем из памяти\n"
+                "4. general - если пользователь хочет просто поговорить, задать общий вопрос, или поболтать без конкретной темы или все остальное что не относится к первым трем.\n\n"
+                "Вопрос: {question}\n\n"
+                "Выбери наиболее подходящий вариант: general, rag_answer, generate_quiz или evaluate_quiz."
+            )
+        
+        # Форматируем промпт с вопросом
+        prompt = base_prompt.format(question=question)
+        
+        # Добавляем инструкцию для структурированного вывода
+        prompt += "\n\nВерни только JSON с полем intent."
+        
+        # Получаем чат-модель со структурированным выводом
+        chat = self.client.create_chat(temperature=0.1)
+        structured_chat = chat.with_structured_output(IntentModel)
+        
+        try:
+            # Вызываем модель
+            result = structured_chat.invoke([HumanMessage(content=prompt)])
+            
+            # Возвращаем intent (result - это словарь)
+            return result.get("intent", "general")
+        except Exception as e:
+            self.log.error(f"Error in structured intent determination: {e}")
+            # В случае ошибки возвращаем general по умолчанию
             return "general"
 
     # ---------- Сборка графа ----------

@@ -91,23 +91,37 @@ async def get_messages(session_id: str = "default"):
         if not session:
             return {"messages": [], "session_id": session_id}
         
+        # Логирование для отладки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"DEBUG: get_messages called for session {session_id}")
+        logger.info(f"DEBUG: last_events count: {len(session.last_events)}")
+        
         # Возвращаем историю в формате {"role": "...", "content": "..."}
         messages = []
+        
+        # Собираем все события в хронологическом порядке
         for event in session.last_events:
-            if event["step"] == "final_answer":
-                # Финальный ответ агента
-                final_answer = event["meta"].get("final_answer", "")
-                if final_answer:
-                    messages.append({"role": "agent", "content": final_answer})
-            elif event["step"] == "start_run":
+            logger.info(f"DEBUG: Event - step={event['step']}, level={event['level']}")
+            if event["step"] == "start_run":
                 # Вопрос пользователя
                 question = event["meta"].get("question", "")
                 if question:
                     messages.append({"role": "user", "content": question})
-            elif event["level"] == "info":
+                    logger.info(f"DEBUG: Added user: {question[:50]}...")
+            elif event["level"] == "info" and event["step"] != "final_answer":
                 # Системное сообщение о прогрессе
                 messages.append({"role": "system", "content": event["message"]})
+                logger.info(f"DEBUG: Added system: {event['message'][:50]}...")
+            elif event["step"] == "final_answer":
+                # Финальный ответ агента
+                final_answer = event["meta"].get("final_answer", "")
+                if final_answer:
+                    messages.append({"role": "agent", "content": final_answer})
+                    logger.info(f"DEBUG: Added agent: {final_answer[:50]}...")
         
+        logger.info(f"DEBUG: Returning {len(messages)} messages")
+        logger.info(f"DEBUG: Messages content: {messages}")
         return {"messages": messages, "session_id": session_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
