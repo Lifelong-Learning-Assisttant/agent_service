@@ -1,6 +1,6 @@
 # Документация по сетевому взаимодействию
 
-Этот документ описывает сетевое взаимодействие между сервисом агента и веб-интерфейсом в средах разработки и продакшена.
+Этот документ описывает сетевое взаимодействие между сервисом агента и веб-интерфейсом во всех средах: development, pre-production и production.
 
 ## Обзор
 
@@ -8,206 +8,293 @@
 - **Сервис агента**: Обрабатывает логику и взаимодействия, связанные с агентом.
 - **Веб-интерфейс**: Предоставляет пользовательский интерфейс для взаимодействия с агентом.
 
-Оба сервиса имеют отдельные конфигурации для сред разработки и продакшена, использующие изолированные Docker сети.
+Все сервисы имеют три конфигурации:
+- **Dev**: Для быстрой разработки с hot reload
+- **Pre-prod**: Для тестирования prod-версий перед релизом
+- **Prod**: Для production-окружения
 
 ## Диаграмма сети
 
 ```mermaid
 graph TD
-    subgraph Среда разработки
-        A1[Dev Agent Service<br/>Порт 8250] -->|web_ui_network_dev| B1[Dev Web UI Backend<br/>Порт 8351]
+    subgraph Development
+        A1[Dev Agent<br/>8250] -->|web_ui_network_dev| B1[Dev Backend<br/>8351]
         B1 -->|web_ui_network_dev| A1
-        B1 -->|web_ui_network_dev| C1[Dev Web UI Frontend<br/>Порт 8350]
+        B1 -->|web_ui_network_dev| C1[Dev Frontend<br/>8350]
         C1 -->|web_ui_network_dev| B1
     end
 
-    subgraph Среда продакшена
-        A2[Prod Agent Service<br/>Порт 8270] -->|web_ui_network_prod| B2[Prod Web UI Backend<br/>Порт 8151]
-        B2 -->|web_ui_network_prod| A2
-        B2 -->|web_ui_network_prod| C2[Prod Web UI Frontend<br/>Порт 8150]
-        C2 -->|web_ui_network_prod| B2
+    subgraph Pre-Production
+        A2[Pre-Prod Agent<br/>8250] -->|web_ui_network_preprod| B2[Pre-Prod Backend<br/>8351]
+        B2 -->|web_ui_network_preprod| A2
+        B2 -->|web_ui_network_preprod| C2[Pre-Prod Frontend<br/>8350]
+        C2 -->|web_ui_network_preprod| B2
+    end
+
+    subgraph Production
+        A3[Prod Agent<br/>8270] -->|web_ui_network_prod| B3[Prod Backend<br/>8151]
+        B3 -->|web_ui_network_prod| A3
+        B3 -->|web_ui_network_prod| C3[Prod Frontend<br/>8150]
+        C3 -->|web_ui_network_prod| B3
     end
 
     subgraph Общие сервисы
-        D[RAG Service<br/>Порт 8000] -->|bridge| A1
+        D[RAG Service<br/>8000] -->|bridge| A1
         D -->|bridge| A2
-        E[Test Generator<br/>Порт 52812] -->|bridge| A1
+        D -->|bridge| A3
+        E[Test Generator<br/>52812] -->|bridge| A1
         E -->|bridge| A2
+        E -->|bridge| A3
     end
 ```
 
-## Среда разработки
+## Среды развертывания
 
-### Dev Agent Service
-- **Порт**: 8250
-- **Имя сервиса**: `agent_dev`
-- **Сеть**: `web_ui_network_dev`
-- **Конфигурация**: `app_settings-dev.json`
-- **URL Web UI**: `http://web_ui_service-frontend-dev:80`
+### 1. Development (Dev)
 
-### Dev Web UI Backend
-- **Порт**: 8351
-- **Имя сервиса**: `web_ui_service-backend-dev`
-- **Сеть**: `web_ui_network_dev`
-- **URL Agent Service**: `http://agent_dev:8250`
-- **Особенности**: Код монтируется через volume, hot reload
+**Назначение**: Быстрая разработка с горячей перезагрузкой кода.
 
-### Dev Web UI Frontend
-- **Порт**: 8350 (доступен с хоста)
-- **Имя сервиса**: `web_ui_service-frontend-dev`
-- **Сеть**: `web_ui_network_dev`
-- **URL Backend**: `http://web_ui_service-backend-dev:8351`
-- **Особенности**: Код монтируется через volume, nginx внутри контейнера
+**Особенности**:
+- Код монтируется через volume (hot reload)
+- Frontend: React собирается внутри контейнера при запуске
+- Backend: Python код монтируется напрямую
+- Порты: 8250 (agent), 8351 (backend), 8350 (frontend)
 
-### Взаимодействие
-- Сервис агента в среде разработки взаимодействует с Web UI Backend через сеть `web_ui_network_dev`.
-- Web UI Backend взаимодействует с Agent Service на порту 8250.
-- Web UI Frontend взаимодействует с Web UI Backend на порту 8351.
-- Пользователь обращается к Frontend на порту 8350.
+**Запуск**:
+```bash
+# Web UI Service
+cd web_ui_service
+docker compose -f docker-compose-dev.yml up --build
 
-## Среда продакшена
+# Agent Service
+cd ../agent_service
+docker compose -f docker-compose-dev.yml up --build
+```
 
-### Prod Agent Service
-- **Порт**: 8270
-- **Имя сервиса**: `agent_prod`
-- **Сеть**: `web_ui_network_prod`
-- **Конфигурация**: `app_settings-prod.json`
-- **URL Web UI**: `http://web_ui_frontend:80`
+**Сеть**: `web_ui_network_dev`
 
-### Prod Web UI Backend
-- **Порт**: 8151
-- **Имя сервиса**: `web_ui_backend`
-- **Сеть**: `web_ui_network_prod`
-- **URL Agent Service**: `http://agent_prod:8250`
-- **Особенности**: Готовый Docker образ из GHCR, код внутри образа
-- **Образ**: `ghcr.io/lifelong-learning-assisttant/web_ui_backend:v001`
+### 2. Pre-Production (Pre-Prod)
 
-### Prod Web UI Frontend
-- **Порт**: 8150 (доступен с хоста)
-- **Имя сервиса**: `web_ui_frontend`
-- **Сеть**: `web_ui_network_prod`
-- **URL Backend**: `http://web_ui_backend:8151`
-- **Особенности**: Готовый Docker образ из GHCR, nginx внутри контейнера
-- **Образ**: `ghcr.io/lifelong-learning-assisttant/web_ui_frontend:v001`
+**Назначение**: Предварительное тестирование prod-версий перед релизом.
 
-### Взаимодействие
-- Сервис агента в среде продакшена взаимодействует с Web UI Backend через сеть `web_ui_network_prod`.
-- Web UI Backend взаимодействует с Agent Service на порту 8250.
-- Web UI Frontend взаимодействует с Web UI Backend на порту 8151.
-- Пользователь обращается к Frontend на порту 8150.
-- Оба сервиса находятся в сети `web_ui_network_prod`, что обеспечивает их изоляцию и корректное взаимодействие.
+**Особенности**:
+- Использует те же Dockerfile, что и prod
+- Собирает prod-образы с кодом внутри
+- Запускается на dev-портах (8250, 8351, 8350)
+- Позволяет тестировать prod-сборку без влияния на пользователей
+- Изолированная сеть, не конфликтует с dev и prod
+
+**Запуск**:
+```bash
+# Web UI Service
+cd web_ui_service
+docker compose -f docker-compose-preprod.yml up --build
+
+# Agent Service
+cd ../agent_service
+docker compose -f docker-compose-preprod.yml up --build
+```
+
+**Сеть**: `web_ui_network_preprod`
+
+**Порты**:
+- Frontend: 8350
+- Backend: 8351
+- Agent: 8250
+
+**Отличие от prod**: Только порты, сеть и имена контейнеров отличаются. Код и конфигурация идентичны prod.
+
+### 3. Production (Prod)
+
+**Назначение**: Production-развертывание для пользователей.
+
+**Особенности**:
+- Использует готовые образы из GHCR
+- Код внутри образов (не монтируется)
+- Порты: 8270 (agent), 8151 (backend), 8150 (frontend)
+- Публикация образов в GitHub Container Registry
+
+**Запуск**:
+```bash
+# Web UI Service
+cd web_ui_service
+docker compose -f docker-compose-prod.yml up
+
+# Agent Service
+cd ../agent_service
+docker compose -f docker-compose-prod.yml up
+```
+
+**Сеть**: `web_ui_network_prod`
+
+## Сравнение сред
+
+| Аспект | Development | Pre-Production | Production |
+|--------|-------------|----------------|------------|
+| **Назначение** | Разработка | Тестирование prod | Пользователи |
+| **Frontend порт** | 8350 | 8350 | 8150 |
+| **Backend порт** | 8351 | 8351 | 8151 |
+| **Agent порт** | 8250 | 8250 | 8270 |
+| **Сеть** | web_ui_network_dev | web_ui_network_preprod | web_ui_network_prod |
+| **Код Frontend** | Сборка в контейнере | Prod-образ | Prod-образ из GHCR |
+| **Код Backend** | Volume (hot reload) | Prod-образ | Prod-образ из GHCR |
+| **Код Agent** | Volume (hot reload) | Prod-образ | Prod-образ из GHCR |
+| **Образы** | Локальные | Локальные | GHCR |
+| **Публикация** | Нет | Нет | Да (GHCR) |
+
+## Поток разработки и релиза
+
+### 1. Development Phase
+```bash
+# Разработка
+cd web_ui_service
+docker compose -f docker-compose-dev.yml up --build
+
+# Параллельно агент
+cd ../agent_service
+docker compose -f docker-compose-dev.yml up --build
+```
+
+### 2. Pre-Production Testing
+```bash
+# Собираем prod-образы
+cd web_ui_service/frontend
+docker build -f Dockerfile-prod -t web_ui_frontend:preprod .
+cd ../backend
+docker build -f Dockerfile-prod -t web_ui_backend:preprod .
+
+# Запускаем pre-prod
+cd ..
+docker compose -f docker-compose-preprod.yml up
+
+# Тестируем на портах 8350/8351/8250
+```
+
+### 3. Production Release
+```bash
+# Публикация в GHCR
+docker tag web_ui_frontend:preprod ghcr.io/lifelong-learning-assisttant/web_ui_frontend:v002
+docker push ghcr.io/lifelong-learning-assisttant/web_ui_frontend:v002
+
+# Запуск prod
+docker compose -f docker-compose-prod.yml up
+```
+
+## Примеры docker-compose-preprod.yml
+
+### Web UI Service (preprod)
+```yaml
+services:
+  frontend:
+    image: web_ui_frontend:preprod  # Локальный prod-образ
+    ports:
+      - "8350:80"
+    networks:
+      - web_ui_network_preprod
+
+  backend:
+    image: web_ui_backend:preprod  # Локальный prod-образ
+    ports:
+      - "8351:8351"
+    environment:
+      - BACKEND_PORT=8351
+      - AGENT_SERVICE_URL=http://agent_preprod:8250
+      - ALLOWED_ORIGINS=http://localhost:8350
+    networks:
+      - web_ui_network_preprod
+
+networks:
+  web_ui_network_preprod:
+    driver: bridge
+    name: web_ui_network_preprod
+```
+
+### Agent Service (preprod)
+```yaml
+services:
+  agent_preprod:
+    image: agent_service:preprod  # Локальный prod-образ
+    ports:
+      - "8250:8250"
+    environment:
+      - AGENT_PORT=8250
+      - WEB_UI_URL=http://backend:8351
+    networks:
+      - web_ui_network_preprod
+      - rag_rag_network
+      - test_generator_default
+
+networks:
+  web_ui_network_preprod:
+    external: true
+  rag_rag_network:
+    external: true
+  test_generator_default:
+    external: true
+```
 
 ## Общие сервисы
 
-Оба сервиса агента (dev и prod) взаимодействуют со следующими общими сервисами через сети Docker:
+Все среды взаимодействуют с общими сервисами:
 
 ### RAG Service
 - **Порт**: 8000
 - **URL**: `http://rag-api:8000`
 - **Сеть**: `rag_rag_network`
-- **Используется для**: Retrieval-Augmented Generation
+- **Используется**: Retrieval-Augmented Generation
 
-### Test Generator Service
+### Test Generator
 - **Порт**: 52812
-- **URL**: `http://api:52812` (в сети `test_generator_default`)
+- **URL**: `http://api:52812`
 - **Сеть**: `test_generator_default`
-- **Контейнер**: `llm-tester-api`
-- **Используется для**: Генерация тестов и их оценка через async-инструменты
+- **Используется**: Генерация и оценка тестов
 
-## Примечание о сетях
+## Порядок запуска
 
-Dev и prod сервисы используют разные сети (`web_ui_network_dev` и `web_ui_network_prod` соответственно) для обеспечения изоляции и предотвращения конфликтов. Это позволяет:
-- Избегать случайного взаимодействия между dev и prod сервисами.
-- Обеспечивать предсказуемое разрешение имен сервисов внутри каждой сети.
-- Упрощать управление и отладку, так как каждая среда изолирована.
+### Для Pre-Production
+```bash
+# 1. Web UI Service (создает сеть)
+cd web_ui_service
+docker compose -f docker-compose-preprod.yml up -d
 
-## Порядок запуска сервисов
+# 2. Agent Service (подключается к сети)
+cd ../agent_service
+docker compose -f docker-compose-preprod.yml up -d
+```
 
 ### Для Production
-При запуске prod-сервисов важно соблюдать порядок:
-1. **Сначала запустите `web_ui_service`**:
-    ```bash
-    cd web_ui_service
-    docker compose -f docker-compose-prod.yml up -d
-    ```
-    Это создаст сеть `web_ui_network_prod`.
+```bash
+# 1. Web UI Service (создает сеть)
+cd web_ui_service
+docker compose -f docker-compose-prod.yml up -d
 
-2. **Затем запустите `agent_service`**:
-    ```bash
-    cd agent_service
-    docker compose -f docker-compose-prod.yml up -d
-    ```
-    Это подключит сервис агента к уже созданной сети `web_ui_network_prod`.
+# 2. Agent Service (подключается к сети)
+cd ../agent_service
+docker compose -f docker-compose-prod.yml up -d
+```
 
-**Важно**: Для production используются готовые образы из GHCR. Убедитесь, что они доступны:
-- `ghcr.io/lifelong-learning-assisttant/web_ui_backend:v001`
-- `ghcr.io/lifelong-learning-assisttant/web_ui_frontend:v001`
-- `ghcr.io/lifelong-learning-assisttant/agent_service:v001`
+## Изоляция и предотвращение конфликтов
 
-### Для Development
-Для dev режима порядок не критичен, но рекомендуется:
-1. **Сначала запустите `web_ui_service`**:
-    ```bash
-    cd web_ui_service
-    docker compose -f docker-compose-dev.yml up --build -d
-    ```
+### Преимущества трех сред:
+1. **Dev**: Быстрая разработка, не влияет на тестирование
+2. **Pre-prod**: Тестирование prod-сборки без риска для пользователей
+3. **Prod**: Стабильная работа для пользователей
 
-2. **Затем запустите `agent_service`**:
-    ```bash
-    cd agent_service
-    docker compose -f docker-compose-dev.yml up --build -d
-    ```
-
-**Особенности dev режима**:
-- Код монтируется через volume (hot reload)
-- Frontend доступен на порту 8350
-- Backend доступен на порту 8351
-- Agent доступен на порту 8250
-
-Этот порядок важен, так как `web_ui_service` создает сеть, к которой затем подключается `agent_service`.
-
-## Настройка async-инструментов
-
-Для работы async-инструментов с test_generator необходимо:
-
-1. **Добавить httpx в зависимости** (уже в `pyproject.toml`):
-   ```toml
-   dependencies = [
-       "httpx",
-       ...
-   ]
-   ```
-
-2. **Настроить переменные окружения**:
-   - `TEST_GENERATOR_SERVICE_URL=http://api:52812`
-
-3. **Обновить docker-compose файлы**:
-   - Добавить сеть `test_generator_network` с внешней сетью `test_generator_default`
-   - Убедиться, что контейнер agent_service подключен к этой сети
-
-4. **Синхронизировать зависимости в контейнере**:
-   ```bash
-   docker exec agent_service-agent_dev-1 uv sync
-   ```
+### Конфликты предотвращены:
+- Разные сети Docker
+- Разные порты (prod)
+- Одинаковые порты (dev/pre-prod) но разные сети
+- Изолированные контейнеры
 
 ## Итоги
 
-- **Среда разработки**:
-  - Агент: порт 8250
-  - Web UI Backend: порт 8351
-  - Web UI Frontend: порт 8350 (доступен с хоста)
-  - Сеть: `web_ui_network_dev`
-  - Код: монтируется через volume (hot reload)
+- **Dev**: Для разработки с hot reload (порты 8250/8351/8350)
+- **Pre-prod**: Для тестирования prod-сборки на dev-портах (8250/8351/8350)
+- **Prod**: Для пользователей (порты 8270/8151/8150)
 
-- **Среда продакшена**:
-  - Агент: порт 8270
-  - Web UI Backend: порт 8151
-  - Web UI Frontend: порт 8150 (доступен с хоста)
-  - Сеть: `web_ui_network_prod`
-  - Код: внутри Docker образов из GHCR
+**Рекомендуемый поток**:
+1. Разрабатывайте в dev
+2. Собирайте prod-образы и тестируйте в pre-prod
+3. Публикуйте в GHCR и разворачивайте в prod
 
-- **Общие сервисы**: Все сервисы используют те же порты для взаимодействия с RAG и Test Generator
-- **Изоляция**: Разные сети для dev и prod предотвращают конфликты
-- **Async-инструменты**: Работают через httpx с test_generator по адресу `http://api:52812` в сети `test_generator_default`
-
-Эта конфигурация обеспечивает возможность одновременной работы обеих сред без конфликтов портов, сохраняя при этом согласованное взаимодействие с общими сервисами.
+Эта конфигурация обеспечивает безопасную, изолированную и эффективную работу всех сред.

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  # Agent Service (pre-prod)
+  agent_preprod:
+    image: agent_service:preprod  # Локальный prod-образ
+    container_name: agent_service-agent_preprod-1
+    ports:
+      - "8250:8250"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=preproduction
+      - AGENT_PORT=8250
+      - WEB_UI_URL=http://backend:8351
+      - SETTINGS_FILE=app_settings-prod.json
+    networks:
+      - web_ui_network_preprod
+      - rag_rag_network
+      - test_generator_default
+    depends_on:
+      - backend
+
+networks:
+  web_ui_network_preprod:
+    external: true
+  rag_rag_network:
+    external: true
+  test_generator_default:
+    external: true
