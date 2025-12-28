@@ -66,12 +66,13 @@ class AgentSession:
         
         self.log.info(f"AgentSession created: {session_id}")
     
-    async def start(self, question: str) -> None:
+    async def start(self, question: str, mode: str = "qa") -> None:
         """
         Запускает обработку вопроса в фоновой задаче.
         
         Args:
             question: Вопрос пользователя
+            mode: Режим работы ('qa' или 'quiz')
         """
         async with self.lock:
             if self.is_running():
@@ -80,12 +81,13 @@ class AgentSession:
             
             # Обновляем состояние
             self.state["question"] = question
+            self.state["mode"] = mode
             self.touch()
             self.cancelled = False
             
             # Запускаем фоновую задачу
             self.task = asyncio.create_task(self._run_graph(question))
-            self.log.info(f"Session {self.session_id} started task")
+            self.log.info(f"Session {self.session_id} started task in mode {mode}")
     
     async def _run_graph(self, question: str) -> None:
         """
@@ -260,3 +262,43 @@ class AgentSession:
         """Возвращает возраст сессии в секундах."""
         now = datetime.now(timezone.utc)
         return (now - self.last_active_at).total_seconds()
+    
+    def get_last_events(self, limit: int = 50) -> list:
+        """
+        Возвращает последние события сессии.
+        
+        Args:
+            limit: Максимальное количество событий для возврата
+            
+        Returns:
+            list: Список последних событий
+        """
+        events = list(self.last_events)
+        if limit:
+            return events[-limit:]
+        return events
+    
+    async def get_events_stream(self, timeout: float = 30.0) -> list:
+        """
+        Ожидает новые события и возвращает их.
+        
+        Args:
+            timeout: Таймаут ожидания в секундах
+            
+        Returns:
+            list: Новые события или пустой список по таймауту
+        """
+        start_time = datetime.now(timezone.utc)
+        initial_count = len(self.last_events)
+        
+        while (datetime.now(timezone.utc) - start_time).total_seconds() < timeout:
+            current_count = len(self.last_events)
+            if current_count > initial_count:
+                # Есть новые события
+                new_events = list(self.last_events)[initial_count:]
+                return new_events
+            
+            await asyncio.sleep(0.1)
+        
+        # Таймаут - возвращаем пустой список
+        return []

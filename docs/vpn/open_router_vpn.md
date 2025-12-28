@@ -1,22 +1,24 @@
-# AdGuard VPN + OpenRouter: Selective Routing
+# AdGuard VPN + OpenRouter + OpenAI: Selective Routing
 
 ## Проблема
 
 ### Географические ограничения
-OpenRouter блокирует доступ из российских IP-адресов:
+OpenRouter и OpenAI блокируют доступ из российских IP-адресов:
 ```
-Error code: 403 - {'error': {'message': 'Access denied: This service is not available in your region.'}}
+OpenRouter: Error code: 403 - {'error': {'message': 'Access denied: This service is not available in your region.'}}
+OpenAI: Error code: 403 - {'error': {'code': 'unsupported_country_region_territory', 'message': 'Country, region, or territory not supported'}}
 ```
 
 ### Дилемма
 - **VPN для всего трафика**: ❌ Ломает доступ к локальным сервисам в РФ
-- **Без VPN**: ❌ OpenRouter недоступен
-- **Решение**: ✅ Селективный VPN (только openrouter.ai)
+- **Без VPN**: ❌ OpenRouter и OpenAI недоступны
+- **Решение**: ✅ Селективный VPN (только openrouter.ai и api.openai.com)
 
 ## Решение
 
 Скрипт [`fix-vpn-routes.sh`](../fix-vpn-routes.sh) автоматически настраивает селективную маршрутизацию:
 - ✅ OpenRouter идет через VPN
+- ✅ OpenAI API идет через VPN
 - ✅ Локальные сервисы работают напрямую
 - ✅ Остальной интернет без VPN
 
@@ -27,9 +29,10 @@ Error code: 403 - {'error': {'message': 'Access denied: This service is not avai
 # Установить режим selective
 adguardvpn-cli site-exclusions mode selective
 
-# Добавить домены OpenRouter
+# Добавить домены OpenRouter и OpenAI
 adguardvpn-cli site-exclusions add openrouter.ai
 adguardvpn-cli site-exclusions add api.openrouter.ai
+adguardvpn-cli site-exclusions add api.openai.com
 
 # Подключить VPN
 adguardvpn-cli connect -l de
@@ -223,8 +226,59 @@ AdGuard VPN в режиме selective работает так:
 
 Скрипт исправляет это, удаляя общее правило и добавляя точечные маршруты только для OpenRouter.
 
+## Тестирование доступности
+
+### Проверка OpenRouter
+```bash
+curl -s --connect-timeout 5 https://openrouter.ai/api/v1/models | head -5
+```
+
+### Проверка OpenAI API
+```bash
+curl -s --connect-timeout 5 -H "Authorization: Bearer test" https://api.openai.com/v1/models | head -5
+```
+
+### Проверка из Docker контейнера test_generator
+```bash
+docker exec llm-tester-api python3 -c "
+import httpx
+import asyncio
+async def test():
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get('https://api.openai.com/v1/models',
+                                  headers={'Authorization': 'Bearer test'})
+        print('OpenAI Status:', response.status_code)
+asyncio.run(test())
+"
+```
+
 ## См. также
 
 - [Настройка AdGuard VPN CLI](./adguard_vpn_setup.md) - Полная настройка VPN
 - [Сетевая архитектура](./network_architecture.md) - Общая схема работы
 - [Скрипт исправления](../fix-vpn-routes.sh) - Исходный код скрипта
+
+## Важные замечания
+
+### Про OpenAI API
+OpenAI API требует VPN для доступа из России. Если вы получаете ошибку:
+```
+Error code: 403 - {'error': {'code': 'unsupported_country_region_territory', 'message': 'Country, region, or territory not supported'}}
+```
+
+**Решение**:
+1. Добавить `api.openai.com` в исключения VPN: `adguardvpn-cli site-exclusions add api.openai.com`
+2. Подключить VPN: `adguardvpn-cli connect -l de`
+3. Запустить исправление маршрутов: `sudo ./agent_service/fix-vpn-routes.sh`
+4. Проверить доступность: `curl -I https://api.openai.com`
+
+### Про OpenRouter
+OpenRouter также требует VPN для доступа из России. В отличие от OpenAI, OpenRouter можно использовать как прокси к OpenAI моделям, если у вас есть доступ к OpenRouter.
+
+### Автоматизация
+После каждого переподключения VPN **обязательно** запускайте скрипт исправления маршрутов:
+```bash
+sudo ./agent_service/fix-vpn-routes.sh
+```
+
+Или настройте systemd timer/cron job для автоматического запуска.

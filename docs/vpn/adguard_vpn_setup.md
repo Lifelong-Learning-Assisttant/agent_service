@@ -34,11 +34,10 @@ adguardvpn-cli site-exclusions mode selective
 ### 2. Добавление доменов в список исключений
 
 ```bash
-# Добавить openrouter.ai для доступа через VPN
+# Добавить домены для доступа через VPN
 adguardvpn-cli site-exclusions add openrouter.ai
-
-# Можно добавить несколько доменов сразу
 adguardvpn-cli site-exclusions add api.openrouter.ai
+adguardvpn-cli site-exclusions add api.openai.com
 ```
 
 ### 3. Проверка настроек
@@ -57,7 +56,27 @@ Current exclusion mode is SELECTIVE
 Exclusions for SELECTIVE mode:
 openrouter.ai
 api.openrouter.ai
+api.openai.com
 ```
+
+### 4. Важное примечание про OpenAI API
+
+**OpenAI API требует VPN для доступа из России**. Если вы получаете ошибку:
+```
+Error code: 403 - {'error': {'code': 'unsupported_country_region_territory', 'message': 'Country, region, or territory not supported'}}
+```
+
+Это означает, что OpenAI блокирует доступ из российских IP-адресов.
+
+**Решение**:
+1. Убедитесь, что `api.openai.com` добавлен в исключения VPN
+2. Подключите VPN к локации, где доступен OpenAI (например, Германия)
+3. Запустите скрипт исправления маршрутов: `sudo ./agent_service/fix-vpn-routes.sh`
+4. Проверьте доступность: `curl -I https://api.openai.com`
+
+**Альтернативный подход**: Если VPN не помогает, можно использовать:
+- OpenRouter (уже настроен) как прокси к OpenAI моделям
+- Другие провайдеры API, доступные в вашем регионе
 
 ## Подключение к VPN
 
@@ -116,9 +135,10 @@ adguardvpn-cli disconnect
 # 1. Установить режим selective
 adguardvpn-cli site-exclusions mode selective
 
-# 2. Добавить домены
+# 2. Добавить домены (OpenRouter + OpenAI)
 adguardvpn-cli site-exclusions add openrouter.ai
 adguardvpn-cli site-exclusions add api.openrouter.ai
+adguardvpn-cli site-exclusions add api.openai.com
 
 # 3. Проверить настройки
 adguardvpn-cli site-exclusions show
@@ -129,6 +149,13 @@ adguardvpn-cli connect -l de
 
 # 5. Проверить статус
 adguardvpn-cli status
+
+# 6. Исправить маршруты (ВАЖНО!)
+sudo ./agent_service/fix-vpn-routes.sh
+
+# 7. Проверить доступность
+curl -I https://openrouter.ai
+curl -I https://api.openai.com
 ```
 
 ## Дополнительные команды

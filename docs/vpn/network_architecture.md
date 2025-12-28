@@ -3,18 +3,16 @@
 ## Проблема
 
 ### Географические ограничения
-OpenRouter блокирует доступ из российских IP-адресов:
+OpenRouter и OpenAI блокируют доступ из российских IP-адресов:
 ```
-2025-12-24 13:23:38 | ERROR | llm_service.llm_client | 
-validate_api_key: ошибка PermissionDeniedError(
-"Error code: 403 - {'error': {'message': 'Access denied: This service is not available in your region.', 'code': 403}}"
-)
+OpenRouter: Error code: 403 - {'error': {'message': 'Access denied: This service is not available in your region.'}}
+OpenAI: Error code: 403 - {'error': {'code': 'unsupported_country_region_territory', 'message': 'Country, region, or territory not supported'}}
 ```
 
 ### Дилемма
 - **VPN для всего трафика**: ❌ Ломает доступ к локальным сервисам в РФ
-- **Без VPN**: ❌ OpenRouter недоступен
-- **Решение**: ✅ Селективный VPN (только openrouter.ai)
+- **Без VPN**: ❌ OpenRouter и OpenAI недоступны
+- **Решение**: ✅ Селективный VPN (только openrouter.ai и api.openai.com)
 
 ## Схема конфигурации сети
 
@@ -60,8 +58,8 @@ graph TB
 ## Компоненты системы
 
 ### 1. AdGuard VPN CLI (Selective Mode)
-**Режим**: `selective`  
-**Исключения**: `openrouter.ai`, `api.openrouter.ai`
+**Режим**: `selective`
+**Исключения**: `openrouter.ai`, `api.openrouter.ai`, `api.openai.com`
 
 **Результат**: VPN активен только для указанных доменов.
 

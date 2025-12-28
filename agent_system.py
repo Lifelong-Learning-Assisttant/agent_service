@@ -21,10 +21,14 @@ class AgentState(TypedDict, total=False):
     """Общее состояние исполнения графа."""
 
     question: str
-    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"]
+    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]
     documents: List[str]
-    quiz_content: Optional[str]
-    user_solution: Optional[str]
+    
+    # Поля для интерактивного квиза
+    quiz_questions: List[Dict[str, str]]  # Список {"question": "...", "answer": "..."}
+    current_quiz_index: int               # Индекс текущего вопроса
+    user_answers: List[str]               # Ответы пользователя
+    
     final_answer: str
 
 
@@ -183,14 +187,22 @@ class AgentSystem:
     # ---------- Узлы графа ----------
     async def planner_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Анализирует запрос и определяет план действий (intent).
-        Отправляет уведомления в UI.
+        Определяет, продолжаем ли мы квиз или анализируем новый запрос.
         """
         import time
 
         q = (state.get("question") or "").strip()
         self.log.info("start:planner | question_len=%d | session=%s", len(q), session is not None)
         t0 = time.perf_counter()
+
+        # Если квиз уже начат, принудительно идем по пути ответов
+        quiz_active = state.get("quiz_questions") is not None and len(state.get("quiz_questions", [])) > 0
+        current_idx = state.get("current_quiz_index", 0)
+        
+        if quiz_active and current_idx < len(state.get("quiz_questions", [])):
+            intent = "quiz_answering"
+        else:
+            intent = self._determine_intent(q)
 
         # Уведомление о начале
         if session:
@@ -200,17 +212,12 @@ class AgentSystem:
                 tool="planner",
                 level="info"
             )
-        else:
-            self.log.warning("planner_node: session is None!")
-
-        # Определяем намерение на основе запроса
-        intent = self._determine_intent(q)
 
         # Уведомление об успехе
         if session:
             await session.notify_ui(
                 step="intent_determined",
-                message=f"Определено намерение: {intent}",
+                message=f"Намерение: {intent}",
                 tool="planner",
                 level="info",
                 meta={"intent": intent}
@@ -386,10 +393,10 @@ class AgentSystem:
 
     async def create_quiz_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Создает квиз на основе документов.
-        Отправляет уведомления в UI.
+        Генерирует квиз и задает ПЕРВЫЙ вопрос.
         """
         import time
+        import json
 
         q = (state.get("question") or "").strip()
         self.log.info("start:create_quiz | q_len=%d", len(q))
@@ -399,15 +406,64 @@ class AgentSystem:
         if session:
             await session.notify_ui(
                 step="start_generate_exam",
-                message="Генерация квиза на основе документов",
+                message="Генерирую вопросы по материалам...",
                 tool="generate_exam",
                 level="info"
             )
 
-        context = "\n".join(state.get("documents", []))
-        # Используем async-инструмент для генерации квиза
-        from langchain_tools import generate_exam_async
-        quiz = await generate_exam_async(context)
+        # Получаем документы и преобразуем в строку
+        docs = state.get("documents", [])
+        if isinstance(docs, list) and len(docs) > 0:
+            # Если документы - это список словарей, извлекаем текст
+            if isinstance(docs[0], dict):
+                context = "\n".join([doc.get("content", "") for doc in docs if isinstance(doc, dict)])
+            else:
+                context = "\n".join([str(doc) for doc in docs])
+        else:
+            context = ""
+        
+        # Если нет контекста, создаем заглушку
+        if not context:
+            context = "Квиз по машинному обучени и глубокому обучению"
+        
+        # Попытка 1: Инструмент выдает вопросы и ответов
+        raw_quiz = await generate_exam_async(context)
+        
+        # Парсим результат инструмента в структурированный список
+        questions = await self._parse_quiz_result(raw_quiz)
+        
+        # Если парсинг не удался, пробуем сгенерировать через LLM напрямую
+        if not questions or len(questions) == 0 or "Ошибка" in questions[0].get("q", ""):
+            if session:
+                await session.notify_ui(
+                    step="generate_retry",
+                    message="Первый метод не сработал, генерирую вопросы напрямую через LLM...",
+                    tool="generate_exam",
+                    level="warn"
+                )
+            
+            # Прямая генерация через LLM
+            prompt = (
+                f"Сгенерируй 3-5 вопросов по теме:\n{context}\n\n"
+                "Формат: каждый вопрос на новой строке, после вопроса через | укажите правильный ответ.\n"
+                "Пример:\n"
+                "Что такое градиентный спуск?|Метод оптимизации\n"
+                "Как работает нейронная сеть?|Через передачу сигналов\n\n"
+                "Верни только вопросы и ответы в указанном формате."
+            )
+            
+            raw_quiz = self.client.generate([prompt], temperature=0.3)[0]
+            questions = await self._parse_quiz_result(raw_quiz)
+            
+            # Если и это не сработало, создаем заглушку
+            if not questions or len(questions) == 0:
+                questions = [
+                    {"q": "Какой-то вопрос 1?", "a": "Ответ 1"},
+                    {"q": "Какой-то вопрос 2?", "a": "Ответ 2"},
+                    {"q": "Какой-то вопрос 3?", "a": "Ответ 3"}
+                ]
+        
+        first_q = questions[0]["q"]
 
         # Уведомление об успехе
         if session:
@@ -416,40 +472,86 @@ class AgentSystem:
                 message="Квиз сгенерирован",
                 tool="generate_exam",
                 level="info",
-                meta={"length": len(quiz)}
+                meta={"length": len(questions)}
             )
 
         dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:create_quiz | quiz_len=%d | %.1f ms", len(quiz or ""), dt)
-        return {**state, "quiz_content": quiz, "final_answer": quiz}
+        self.log.info("done:create_quiz | questions_count=%d | %.1f ms", len(questions), dt)
+        
+        return {
+            **state,
+            "quiz_questions": questions,
+            "current_quiz_index": 0,
+            "user_answers": [],
+            "final_answer": f"Начинаем квиз! Вопрос №1:\n{first_q}"
+        }
 
     async def evaluate_quiz_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Оценивает решение пользователя.
-        Отправляет уведомления в UI.
+        Оценивает квиз, дает обратную связь и СБРАСЫВАЕТ состояние.
         """
         import time
+        import json
 
-        q = (state.get("question") or "").strip()
-        self.log.info("start:evaluate_quiz | q_len=%d", len(q))
+        self.log.info("start:evaluate_quiz")
         t0 = time.perf_counter()
 
         # Уведомление о начале
         if session:
             await session.notify_ui(
                 step="start_grade_exam",
-                message="Оценка ответов пользователя",
+                message="Проверяю ваши ответы...",
                 tool="grade_exam",
                 level="info"
             )
 
-        # Получаем квиз и ответ пользователя
-        quiz_content = state.get("quiz_content", "")
-        user_solution = q
+        questions = state.get("quiz_questions", [])
+        user_answers = state.get("user_answers", [])
+        
+        # Формируем отчет для инструмента проверки
+        quiz_data = []
+        for i, q_item in enumerate(questions):
+            quiz_data.append({
+                "question": q_item["q"],
+                "correct_answer": q_item["a"],
+                "user_answer": user_answers[i] if i < len(user_answers) else "Нет ответа"
+            })
 
-        # Оцениваем ответ через async-инструмент
-        from langchain_tools import grade_exam_async
-        feedback = await grade_exam_async("quiz_1", [{"solution": user_solution}])
+        # Инструмент проверки квиза
+        evaluation_result = await grade_exam_async("quiz_session", quiz_data)
+        
+        # Формируем детальный отчет для пользователя
+        detailed_report = []
+        correct_count = 0
+        
+        for i, q_item in enumerate(questions):
+            question = q_item["q"]
+            correct_answer = q_item["a"]
+            user_answer = user_answers[i] if i < len(user_answers) else "Нет ответа"
+            
+            detailed_report.append(
+                f"Вопрос {i+1}: {question}\n"
+                f"Ваш ответ: {user_answer}\n"
+                f"Правильный ответ: {correct_answer}\n"
+            )
+        
+        # Используем LLM для формирования вежливой и подробной обратной связи
+        summary_prompt = (
+            f"На основе этого квиза составь развернутый отзыв для студента:\n\n"
+            f"Всего вопросов: {len(questions)}\n"
+            f"Результаты проверки: {evaluation_result}\n\n"
+            f"Детальный разбор:\n"
+            f"{'\n'.join(detailed_report)}\n\n"
+            f"Дай рекомендации по улучшению и объясни правильные ответы."
+        )
+        final_feedback = self.client.generate([summary_prompt], temperature=0.3)[0]
+        
+        # Добавляем статистику в начало
+        final_answer = (
+            f"📊 **Результаты квиза**\n"
+            f"Всего вопросов: {len(questions)}\n\n"
+            f"{final_feedback}"
+        )
 
         # Уведомление об успехе
         if session:
@@ -458,12 +560,168 @@ class AgentSystem:
                 message="Оценка выполнена",
                 tool="grade_exam",
                 level="info",
-                meta={"length": len(feedback)}
+                meta={"length": len(final_answer)}
             )
 
         dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:evaluate_quiz | feedback_len=%d | %.1f ms", len(feedback or ""), dt)
-        return {**state, "final_answer": feedback}
+        self.log.info("done:evaluate_quiz | feedback_len=%d | %.1f ms", len(final_answer or ""), dt)
+        
+        # Очищаем данные квиза, чтобы вернуть агент в "начальное состояние"
+        return {
+            **state,
+            "final_answer": final_answer,
+            "quiz_questions": [],
+            "current_quiz_index": 0,
+            "user_answers": [],
+            "intent": "general"
+        }
+
+    async def process_quiz_answer_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
+        """
+        Записывает ответ пользователя и выдает СЛЕДУЮЩИЙ вопрос или переходит к оценке.
+        """
+        import time
+
+        self.log.info("start:process_quiz_answer")
+        t0 = time.perf_counter()
+
+        idx = state.get("current_quiz_index", 0)
+        questions = state.get("quiz_questions", [])
+        
+        # Инициализируем answers как пустой список если None
+        answers = state.get("user_answers")
+        if answers is None:
+            answers = []
+
+        # 1. Сохраняем ответ пользователя на ТЕКУЩИЙ вопрос
+        user_reply = state.get("question", "")
+        answers.append(user_reply)
+
+        # 2. Переходим к следующему индексу
+        next_idx = idx + 1
+
+        # Проверяем, есть ли следующий вопрос
+        has_next_question = next_idx < len(questions)
+        
+        if has_next_question:
+            # Если есть еще вопросы — задаем следующий
+            next_q = questions[next_idx]["q"]
+            
+            # Уведомление
+            if session:
+                await session.notify_ui(
+                    step="next_question",
+                    message=f"Принято. Вопрос №{next_idx + 1}",
+                    tool="process_answer",
+                    level="info"
+                )
+            
+            dt = (time.perf_counter() - t0) * 1000
+            self.log.info("done:process_quiz_answer | next_idx=%d | %.1f ms", next_idx, dt)
+            
+            return {
+                **state,
+                "current_quiz_index": next_idx,
+                "user_answers": answers,
+                "final_answer": f"Принято. Вопрос №{next_idx + 1}:\n{next_q}"
+            }
+        else:
+            # Если вопросы закончились — меняем намерение на оценку
+            if session:
+                await session.notify_ui(
+                    step="quiz_complete",
+                    message="Все вопросы пройдены, начинаю оценку...",
+                    tool="process_answer",
+                    level="info"
+                )
+            
+            dt = (time.perf_counter() - t0) * 1000
+            self.log.info("done:process_quiz_answer | quiz_complete | %.1f ms", dt)
+            
+            return {
+                **state,
+                "user_answers": answers,
+                "intent": "evaluate_quiz"
+            }
+
+    async def _parse_quiz_result(self, raw_text: str) -> List[Dict[str, str]]:
+        """
+        Превращает ответ от test_generator API в список объектов {"q": "...", "a": "..."}.
+        """
+        import json
+        
+        # Парсим JSON ответ от API
+        try:
+            data = json.loads(raw_text)
+            
+            # Формат ответа test_generator: {"exam_id": "...", "questions": [...], "config_used": {...}}
+            if isinstance(data, dict) and "questions" in data:
+                questions = data["questions"]
+                result = []
+                
+                for q in questions:
+                    if isinstance(q, dict):
+                        # Извлекаем вопрос и правильный ответ
+                        stem = q.get("stem", "")
+                        question_type = q.get("type", "")
+                        correct_indices = q.get("correct", [])
+                        options = q.get("options", [])
+                        
+                        if stem and question_type in ["single_choice", "multiple_choice"]:
+                            # Формируем правильный ответ
+                            if correct_indices and options:
+                                # Для single_choice берем первый индекс
+                                # Для multiple_choice объединяем все правильные варианты
+                                correct_answers = [options[i] for i in correct_indices if i < len(options)]
+                                correct_text = "; ".join(correct_answers)
+                                result.append({"q": stem, "a": correct_text})
+                            else:
+                                # Если нет вариантов, просто сохраняем вопрос
+                                result.append({"q": stem, "a": "См. материал"})
+                        elif stem and question_type == "open_ended":
+                            # Для open-ended берем reference_answer
+                            ref_answer = q.get("reference_answer", "См. материал")
+                            result.append({"q": stem, "a": ref_answer})
+                
+                if result:
+                    return result
+            
+            # Альтернативный формат: список вопросов напрямую
+            elif isinstance(data, list):
+                result = []
+                for q in data:
+                    if isinstance(q, dict):
+                        stem = q.get("stem", "")
+                        correct = q.get("correct", [])
+                        options = q.get("options", [])
+                        
+                        if stem:
+                            if correct and options:
+                                correct_answers = [options[i] for i in correct if i < len(options)]
+                                result.append({"q": stem, "a": "; ".join(correct_answers)})
+                            else:
+                                result.append({"q": stem, "a": "См. материал"})
+                
+                if result:
+                    return result
+            
+            # Если формат не распознан, используем LLM для парсинга
+            self.log.warning(f"Unexpected format from test_generator, using LLM fallback")
+            
+        except Exception as e:
+            self.log.error(f"Error parsing test_generator response: {e}")
+        
+        # Fallback: используем LLM для парсинга
+        prompt = (
+            "Преобразуй этот текст квиза в строгий JSON список объектов с ключами 'q' (вопрос) и 'a' (правильный ответ). "
+            "Верни ТОЛЬКО JSON.\n\n" + raw_text
+        )
+        res = self.client.generate([prompt], temperature=0)[0]
+        try:
+            return json.loads(res)
+        except:
+            self.log.error("Failed to parse quiz JSON even with LLM")
+            return [{"q": "Ошибка парсинга. Попробуйте еще раз.", "a": ""}]
 
     # ---------- Ветвление ----------
     @staticmethod
@@ -472,6 +730,12 @@ class AgentSystem:
         intent = state.get("intent", "general")
         if intent == "general":
             return "direct_answer"
+        elif intent == "rag_answer":
+            return "retrieve"
+        elif intent == "generate_quiz":
+            return "retrieve"
+        elif intent == "quiz_answering":
+            return "process_answer"
         elif intent == "evaluate_quiz":
             return "evaluate_quiz"
         else:
@@ -486,7 +750,7 @@ class AgentSystem:
         else:
             return "rag_answer"
 
-    def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"]:
+    def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]:
         """Определяет намерение пользователя с использованием LLM через PydanticOutputParser для гарантированного вывода."""
         from pydantic import BaseModel, Field
         from langchain_core.messages import HumanMessage
@@ -496,8 +760,8 @@ class AgentSystem:
         # Определяем Pydantic модель для структурированного вывода
         class IntentModel(BaseModel):
             """Модель намерения пользователя."""
-            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz"] = Field(
-                description="Намерение пользователя: general для общих вопросов, rag_answer для ответов из учебника, generate_quiz для создания квиза, evaluate_quiz для оценки результатов"
+            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"] = Field(
+                description="Намерение пользователя: general для общих вопросов, rag_answer для ответов из учебника, generate_quiz для создания квиза, evaluate_quiz для оценки результатов, quiz_answering для ответов на вопросы квиза"
             )
         
         # Загружаем промпт из файла
@@ -564,18 +828,24 @@ class AgentSystem:
         builder.add_node("direct_answer", wrap_node(self.direct_answer_node))
         builder.add_node("rag_answer", wrap_node(self.rag_answer_node))
         builder.add_node("create_quiz", wrap_node(self.create_quiz_node))
+        builder.add_node("process_answer", wrap_node(self.process_quiz_answer_node))
         builder.add_node("evaluate_quiz", wrap_node(self.evaluate_quiz_node))
 
         builder.add_edge(START, "planner")
+        
+        # Переходы после планировщика
         builder.add_conditional_edges(
             "planner",
             self.route_after_planner,
             {
                 "direct_answer": "direct_answer",
                 "retrieve": "retrieve",
+                "process_answer": "process_answer",
                 "evaluate_quiz": "evaluate_quiz"
             }
         )
+        
+        # Переходы после retrieve
         builder.add_conditional_edges(
             "retrieve",
             self.route_after_retriever,
@@ -584,6 +854,18 @@ class AgentSystem:
                 "create_quiz": "create_quiz"
             }
         )
+        
+        # Переходы после обработки ответа: либо к следующему вопросу (END и ждем ввода),
+        # либо к оценке (если intent сменился на evaluate_quiz)
+        builder.add_conditional_edges(
+            "process_answer",
+            lambda s: "evaluate_quiz" if s["intent"] == "evaluate_quiz" else END,
+            {
+                "evaluate_quiz": "evaluate_quiz",
+                END: END
+            }
+        )
+
         builder.add_edge("direct_answer", END)
         builder.add_edge("rag_answer", END)
         builder.add_edge("create_quiz", END)
