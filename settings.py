@@ -104,10 +104,8 @@ class LLMSettings(BaseSettings):
         # Это гарантирует, что настройки из app_settings.json перепишут дефолтные значения
         for key, value in app_settings.items():
             if hasattr(self, key):
-                current_value = getattr(self, key)
-                field_info = self.__class__.model_fields.get(key)
-                if field_info and current_value == field_info.default:
-                    setattr(self, key, value)
+                # Настройки из файла всегда имеют приоритет над дефолтными значениями
+                setattr(self, key, value)
         
         # Загружаем системный промпт из файла, если он не был переопределён
         if not self.system_prompt:

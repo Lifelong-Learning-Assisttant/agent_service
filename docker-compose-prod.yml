@@ -1,7 +1,7 @@
 version: "3.8"
 
 services:
-  agent_prod:
+  agent:
     image: ghcr.io/lifelong-learning-assisttant/agent_service:v001
     ports:
       - "8270:8270"
@@ -11,21 +11,28 @@ services:
       - PYTHONUNBUFFERED=1
       - ADDITION_SERVICE_URL=http://addition_service:8000
       - RAG_SERVICE_URL=http://rag-api:8000
-      - TEST_GENERATOR_SERVICE_URL=http://api:52812
-      - WEB_UI_URL=http://web_ui_backend:8151
-    command: uv run python app.py --settings app_settings-prod.json
+      - TEST_GENERATOR_SERVICE_URL=http://test-generator-api:8000
+      - WEB_UI_URL=http://web-frontend:80
+      - WEB_UI_BACKEND_URL=http://web-backend:8151
+    command: uv run python app.py --settings app_settings.json
     networks:
-      - rag_network
-      - test_generator_network
-      - web_ui_network
+      rag_network:
+        aliases:
+          - agent-service
+      test_generator_network:
+        aliases:
+          - agent-service
+      web_ui_network:
+        aliases:
+          - agent-service
 
 networks:
   rag_network:
-    external: true
     name: rag_rag_network
+    external: true
   test_generator_network:
-    external: true
     name: test_generator_default
-  web_ui_network:
     external: true
+  web_ui_network:
     name: web_ui_network
+    external: true

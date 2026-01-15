@@ -199,11 +199,6 @@ class AgentSystem:
         quiz_active = state.get("quiz_questions") is not None and len(state.get("quiz_questions", [])) > 0
         current_idx = state.get("current_quiz_index", 0)
         
-        if quiz_active and current_idx < len(state.get("quiz_questions", [])):
-            intent = "quiz_answering"
-        else:
-            intent = self._determine_intent(q)
-
         # Уведомление о начале
         if session:
             await session.notify_ui(
@@ -212,6 +207,11 @@ class AgentSystem:
                 tool="planner",
                 level="info"
             )
+
+        if quiz_active and current_idx < len(state.get("quiz_questions", [])):
+            intent = "quiz_answering"
+        else:
+            intent = self._determine_intent(q)
 
         # Уведомление об успехе
         if session:
@@ -811,6 +811,12 @@ class AgentSystem:
         try:
             # Пробуем структурированный вывод
             try:
+                # Для OpenRouter и бесплатных моделей часто нет поддержки structured output
+                # Поэтому сразу пробуем fallback, если есть подозрение, или просто оборачиваем в try
+                if self.client.provider == "openrouter" and "free" in self.client.model_name:
+                     # Можно попробовать, но быть готовым к ошибке
+                     pass
+
                 structured_chat = chat.with_structured_output(IntentModel)
                 result = structured_chat.invoke([HumanMessage(content=prompt)])
                 # Если result - это IntentModel (Pydantic), используем атрибут .intent
@@ -821,7 +827,7 @@ class AgentSystem:
                     return result.get("intent", "general")
                 return "general"
             except Exception as se:
-                self.log.warning(f"Structured output failed, falling back to text parsing: {se}")
+                self.log.warning(f"Structured output failed (or skipped), falling back to text parsing: {se}")
                 # Fallback к обычному текстовому ответу и парсингу
                 res = chat.invoke([HumanMessage(content=prompt + "\nОтветь только одним словом: general, rag_answer, generate_quiz или evaluate_quiz.")])
                 content = res.content.lower()

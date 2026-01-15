@@ -1,9 +1,9 @@
 {
-  "default_provider": "zai",
-  "zai_chat_model": "glm-4.7",
+  "default_provider": "openrouter",
+  "openrouter_chat_model": "xiaomi/mimo-v2-flash:free",
   "openrouter_base_url": "https://openrouter.ai/api/v1",
-  "request_timeout_s": 60.0,
-  "connect_timeout_s": 10.0,
+  "request_timeout_s": 120.0,
+  "connect_timeout_s": 20.0,
   "max_retries": 5,
   "retry_base_s": 1.0,
   "retry_max_s": 20.0,
@@ -12,10 +12,11 @@
   "log_level": "INFO",
   "addition_service_url": "http://addition_service:8000",
   "rag_service_url": "http://rag-api:8000",
-  "test_generator_service_url": "http://llm-tester-api:52812",
+  "test_generator_service_url": "http://test-generator-api:8000",
   "is_dev_version": false,
   "agent_port": 8270,
-  "web_ui_url": "http://web_ui_prod:8150",
+  "web_ui_url": "http://web-frontend:80",
+  "web_ui_backend_url": "http://web-backend:8151",
   "session_ttl_seconds": 600,
   "concurrency_limit": 2
 }
