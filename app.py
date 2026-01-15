@@ -116,9 +116,13 @@ async def get_messages(session_id: str = "default"):
             elif event["step"] == "final_answer":
                 # Финальный ответ агента
                 final_answer = event["meta"].get("final_answer", "")
+                thought = event["meta"].get("thought", "")
                 if final_answer:
-                    messages.append({"role": "agent", "content": final_answer})
-                    logger.info(f"DEBUG: Added agent: {final_answer[:50]}...")
+                    msg = {"role": "agent", "content": final_answer}
+                    if thought:
+                        msg["thought"] = thought
+                    messages.append(msg)
+                    logger.info(f"DEBUG: Added agent with thought: {final_answer[:50]}...")
         
         logger.info(f"DEBUG: Returning {len(messages)} messages")
         logger.info(f"DEBUG: Messages content: {messages}")

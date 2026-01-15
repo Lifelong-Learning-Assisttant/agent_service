@@ -78,7 +78,8 @@ process_answer → (END | evaluate_quiz)
 **Файлы**: `llm_service/llm_client.py`, `llm_service/utils.py`
 
 #### LLMClient
-- **Поддерживаемые провайдеры**: OpenAI, OpenRouter, Mistral
+- **Поддерживаемые провайдеры**: OpenAI, OpenRouter, Mistral, Z.ai
+- **Модели Z.ai**: GLM-4.7, GLM-4.6V (с поддержкой Reasoning)
 - **Методы**:
   - `create_chat()` — создает чат-модель
   - `create_embeddings()` — создает модель эмбеддингов
@@ -111,8 +112,8 @@ process_answer → (END | evaluate_quiz)
 - Загрузка из переменных окружения с префиксом `LLM_`
 - Загрузка из `app_settings.json` (путь через `APP_SETTINGS_PATH`)
 - Поля:
-  - `default_provider`: "openai" | "openrouter" | "mistral"
-  - `openai_api_key`, `openrouter_api_key`, `mistral_api_key` (SecretStr)
+  - `default_provider`: "openai" | "openrouter" | "mistral" | "zai"
+  - `openai_api_key`, `openrouter_api_key`, `mistral_api_key`, `zai_api_key` (SecretStr)
   - `web_ui_url`, `web_ui_backend_url`
   - `session_ttl_seconds`, `concurrency_limit`
   - `test_generator_service_url`, `rag_service_url`

@@ -4,7 +4,7 @@ from pydantic import SecretStr, Field
 import json
 import os
 
-ProviderName = Literal["openai", "openrouter", "mistral"]
+ProviderName = Literal["openai", "openrouter", "mistral", "zai"]
 
 
 def load_app_settings():
@@ -77,6 +77,12 @@ class LLMSettings(BaseSettings):
     mistral_chat_model: str = Field(default="mistral-large-latest")
     mistral_emb_model: str = Field(default="mistral-embed")
     mistral_api_key: SecretStr | None = Field(default=None)
+
+    # ---- Z.ai ----
+    zai_chat_model: str = Field(default="glm-4.6v")
+    zai_emb_model: str = Field(default="text-embedding-3-small")
+    zai_base_url: str = Field(default="https://api.z.ai/api/coding/paas/v4/")
+    zai_api_key: SecretStr | None = Field(default=None)
     
     # ---- Системный промпт ----
     system_prompt: str = Field(default="")
@@ -144,6 +150,12 @@ if __name__ == "__main__":
         print("Mistral provider:")
         print("  - chat_model:", s.mistral_chat_model)
         print("  - base_url:", s.mistral_base_url)
+
+    if s.zai_api_key and s.zai_api_key.get_secret_value():
+        providers_with_keys.append("zai")
+        print("Z.ai provider:")
+        print("  - chat_model:", s.zai_chat_model)
+        print("  - base_url:", s.zai_base_url)
     
     print("\nDefault provider:", s.default_provider)
     print("Available providers with API keys:", providers_with_keys)

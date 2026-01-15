@@ -7,7 +7,7 @@ from collections import deque
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from llm_service.llm_client import LLMClient
 from settings import get_settings
@@ -298,7 +298,18 @@ class AgentSystem:
             "Ответь кратко и по делу, оформи в 1–2 абзаца; при необходимости добавь список.\n\n"
             f"Вопрос: {q}"
         )
-        answer = self.client.generate([prompt], temperature=0.2)[0]
+        # Используем invoke для доступа к метаданным (reasoning)
+        chat = self.client.create_chat(temperature=0.2)
+        res = chat.invoke([HumanMessage(content=prompt)])
+        answer = res.content
+        
+        # Извлекаем рассуждения (thought) для Z.ai
+        thought = ""
+        if hasattr(res, 'additional_kwargs'):
+            thought = res.additional_kwargs.get('reasoning_content', '')
+        
+        if not thought and hasattr(res, 'response_metadata'):
+            thought = res.response_metadata.get('thought', '')
 
         # Уведомление об успехе
         if session:
@@ -311,8 +322,8 @@ class AgentSystem:
             )
 
         dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:direct_answer | out_len=%d | %.1f ms", len(answer or ""), dt)
-        return {**state, "final_answer": answer}
+        self.log.info("done:direct_answer | out_len=%d | thought_len=%d | %.1f ms", len(answer or ""), len(thought), dt)
+        return {**state, "final_answer": answer, "thought": thought}
 
     async def rag_answer_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
@@ -372,7 +383,14 @@ class AgentSystem:
         reformat_prompt = reformat_prompt_template + "\n\n" + raw_answer
         
         # Используем LLM для переформатирования
-        answer = self.client.generate([reformat_prompt], temperature=0.1)[0]
+        # Используем invoke для получения метаданных reasoning
+        chat = self.client.create_chat(temperature=0.1)
+        res = chat.invoke([HumanMessage(content=reformat_prompt)])
+        answer = res.content
+        
+        thought = ""
+        if hasattr(res, 'additional_kwargs'):
+            thought = res.additional_kwargs.get('reasoning_content', '')
         
         # Логируем результат переформатирования
         self.log.info("Reformatted answer: %s", answer[:200] + "..." if len(answer) > 200 else answer)
@@ -389,7 +407,7 @@ class AgentSystem:
 
         dt = (time.perf_counter() - t0) * 1000
         self.log.info("done:rag_answer | out_len=%d | %.1f ms", len(answer or ""), dt)
-        return {**state, "final_answer": answer}
+        return {**state, "final_answer": answer, "thought": thought}
 
     async def create_quiz_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """

@@ -1,4 +1,4 @@
-# LLM Client (OpenAI / OpenRouter / Mistral)
+# LLM Client (OpenAI / OpenRouter / Mistral / Z.ai)
 
 Что это: тонкий клиент поверх LangChain для чата и эмбеддингов с логами и ретраями.
 
@@ -27,7 +27,7 @@ from settings import get_settings
 from llm_client import LLMClient
 
 cfg = get_settings()
-client = LLMClient(provider=cfg.default_provider)  # "openai" | "openrouter" | "mistral"
+client = LLMClient(provider=cfg.default_provider)  # "openai" | "openrouter" | "mistral" | "zai"
 print(client.validate_api_key())
 print(client.generate(["ping"], temperature=0.0))
 print([len(v) for v in client.embed(["hello", "world"])])

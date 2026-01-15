@@ -23,13 +23,13 @@ from llm_service.utils import (
 
 class LLMClient:
     """
-    Клиент для LLM и эмбеддингов (OpenAI / OpenRouter / Mistral) поверх LangChain.
+    Клиент для LLM и эмбеддингов (OpenAI / OpenRouter / Mistral / Z.ai) поверх LangChain.
     """
 
     def __init__(self, provider: str, system_prompt: Optional[str] = None):
         """
         Args:
-            provider: Имя провайдера: "openai" | "openrouter" | "mistral".
+            provider: Имя провайдера: "openai" | "openrouter" | "mistral" | "zai".
             system_prompt: Системный промпт для использования в генерации.
         """
         self.provider = (provider or "").lower().strip()
@@ -62,6 +62,8 @@ class LLMClient:
             return self.cfg.openrouter_api_key.get_secret_value()
         if p == "mistral" and self.cfg.mistral_api_key:
             return self.cfg.mistral_api_key.get_secret_value()
+        if p == "zai" and self.cfg.zai_api_key:
+            return self.cfg.zai_api_key.get_secret_value()
 
         self.log.warning("Ключ API отсутствует для провайдера=%s", self.provider)
         return None
@@ -172,6 +174,8 @@ class LLMClient:
             return self.cfg.openrouter_chat_model
         if provider == "mistral":
             return self.cfg.mistral_chat_model
+        if provider == "zai":
+            return self.cfg.zai_chat_model
         raise ValueError(f"Неподдерживаемый провайдер: {provider}")
 
     def _emb_model_for_provider(self, provider: str, override: Optional[str]) -> str:
@@ -184,6 +188,8 @@ class LLMClient:
             return self.cfg.openrouter_emb_model
         if provider == "mistral":
             return self.cfg.mistral_emb_model
+        if provider == "zai":
+            return self.cfg.zai_emb_model
         raise ValueError(f"Неподдерживаемый провайдер: {provider}")
 
     def create_chat(
@@ -208,16 +214,32 @@ class LLMClient:
         p = self.provider
         m = self._chat_model_for_provider(p, model)
 
-        if p in ("openai", "openrouter"):
+        if p in ("openai", "openrouter", "zai"):
             timeout = build_httpx_timeout(
                 connect_s=self.cfg.connect_timeout_s,
                 request_s=self.cfg.request_timeout_s,
             )
             common = dict(model=m, api_key=key, timeout=timeout, max_retries=0, **kwargs)
+            
+            # Добавляем поддержку reasoning для Z.ai если нужно
+            if p == "zai":
+                # Для GLM-4.7 reasoning часто включается через extra_body или спец. модель
+                # Если пользователь захочет, мы сможем передать это в kwargs
+                pass
 
             if p == "openai":
                 self.log.debug("create_chat: OpenAI, model=%s", m)
                 return ChatOpenAI(**common)
+
+            if p == "zai":
+                base_url = getattr(self.cfg, "zai_base_url", "https://api.z.ai/v1")
+                self.log.debug("create_chat: Z.ai (Reasoning enabled), model=%s, base=%s", m, base_url)
+                # Включаем режим рассуждений (thinking) для GLM-4.7
+                return ChatOpenAI(
+                    **common,
+                    base_url=base_url,
+                    model_kwargs={"extra_body": {"thinking": {"type": "enabled"}}}
+                )
 
             base_url = getattr(self.cfg, "openrouter_base_url", "https://openrouter.ai/api/v1")
             headers = openrouter_headers(
@@ -257,7 +279,7 @@ class LLMClient:
         p = self.provider
         m = self._emb_model_for_provider(p, model)
 
-        if p in ("openai", "openrouter"):
+        if p in ("openai", "openrouter", "zai"):
             params = dict(
                 model=m,
                 api_key=key,
@@ -275,6 +297,10 @@ class LLMClient:
                     ),
                 )
                 self.log.debug("create_embeddings: OpenRouter, model=%s, base=%s", m, base_url)
+            elif p == "zai":
+                base_url = getattr(self.cfg, "zai_base_url", "https://api.z.ai/v1")
+                params.update(base_url=base_url)
+                self.log.debug("create_embeddings: Z.ai, model=%s, base=%s", m, base_url)
             else:
                 self.log.debug("create_embeddings: OpenAI, model=%s", m)
             return OpenAIEmbeddings(**params)

@@ -139,12 +139,18 @@ class AgentSession:
             
             # Уведомление о завершении
             final_answer = self.state.get("final_answer", "")
+            thought = self.state.get("thought", "")
+            
             await self.notify_ui(
                 step="final_answer",
-                message="Задача завершена",
+                message=final_answer,
                 tool="agent",
                 level="info",
-                meta={"final_answer": final_answer, "final_length": len(final_answer)}
+                meta={
+                    "final_answer": final_answer,
+                    "final_length": len(final_answer),
+                    "thought": thought
+                }
             )
             
             self.log.info(f"Session {self.session_id} completed successfully")

@@ -15,7 +15,7 @@ services:
       - PYTHONUNBUFFERED=1
       - RAG_SERVICE_URL=http://rag-api:8000
       - TEST_GENERATOR_SERVICE_URL=http://api:52812
-      - WEB_UI_URL=http://web_ui_dev:8350
+      - WEB_UI_URL=http://web_ui_service-backend-dev:8351
     command: uv run python app.py --settings app_settings-dev.json
     networks:
       - web_ui_network_dev
