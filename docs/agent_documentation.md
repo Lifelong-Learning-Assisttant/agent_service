@@ -266,7 +266,7 @@ agent.sweep_expired_sessions(force=True)
 
 #### Ограничение параллелизма
 
-Максимум 3 сессии одновременно (из конфига). При превышении создание блокируется.
+Максимум 2 сессии одновременно (из конфига `concurrency_limit`). При превышении выполнение блокируется до освобождения слота.
 
 ## Конфигурация
 
@@ -277,7 +277,7 @@ agent.sweep_expired_sessions(force=True)
 ```python
 web_ui_url: str = "http://localhost:8150"
 session_ttl_seconds: int = 600
-concurrency_limit: int = 3
+concurrency_limit: int = 2
 test_generator_service_url: str = "http://api:52812"
 http_timeout_s: int = 30
 ```
@@ -292,7 +292,7 @@ http_timeout_s: int = 30
 {
   "web_ui_url": "http://localhost:8150",
   "session_ttl_seconds": 600,
-  "concurrency_limit": 3,
+  "concurrency_limit": 2,
   "test_generator_service_url": "http://api:52812",
   "http_timeout_s": 30
 }
@@ -373,7 +373,7 @@ agent.remove_session(session_id)
 ## Безопасность и ограничения
 
 ### Ограничение параллелизма
-- Максимум 3 сессии одновременно
+- Максимум 2 сессии одновременно (настраивается через `concurrency_limit`)
 - Используется `asyncio.Semaphore`
 
 ### Таймауты
@@ -406,15 +406,15 @@ agent.remove_session(session_id)
 
 ```bash
 docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/ -v
-# Результат: 33/33 тестов ✅
+# Результат: 32/32 тестов ✅
 ```
 
 **Покрытие:**
-- `test_agent_session.py`: 18 тестов
+- `test_agent_session_updated.py`: 17 тестов
 - `test_agent_system_sessions.py`: 15 тестов
 
 **Источники тестов:**
-- `agent_service/tests/test_agent_session.py`
+- `agent_service/tests/test_agent_session_updated.py`
 - `agent_service/tests/test_agent_system_sessions.py`
 
 ### Интеграционные тесты

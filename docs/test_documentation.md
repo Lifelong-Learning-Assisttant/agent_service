@@ -23,7 +23,7 @@ graph TD
 ```
 
 **Источники:**
-- `agent_service/tests/test_agent_session.py` — 18 тестов
+- `agent_service/tests/test_agent_session_updated.py` — 17 тестов
 - `agent_service/tests/test_agent_system_sessions.py` — 15 тестов
 
 ### Тесты пайплайнов
@@ -70,18 +70,18 @@ graph TD
 
 ## Покрытие тестами
 
-### Unit тесты (33 теста)
+### Unit тесты (32 теста)
 
-#### `test_agent_session.py` (18 тестов)
+#### `test_agent_session_updated.py` (17 тестов)
 Проверяет:
 - Инициализацию сессии и поля состояния
 - Методы управления состоянием (`is_running()`, `touch()`, `get_age_seconds()`)
 - Уведомления UI (успех, ошибки, отсутствие URL, таймауты)
 - Жизненный цикл (`start()`, `cancel()`, `cleanup()`)
-- Вызов инструментов с уведомлениями
+- Интеграцию с LangGraph (`ainvoke`, передача конфига)
 - Обработку ошибок
 
-**Источник:** `agent_service/tests/test_agent_session.py`
+**Источник:** `agent_service/tests/test_agent_session_updated.py`
 
 #### `test_agent_system_sessions.py` (15 тестов)
 Проверяет:
@@ -89,7 +89,7 @@ graph TD
 - Удаление сессий
 - Очистку протухших сессий (автоматическую и ручную)
 - Запуск через сессии с автоматическим созданием
-- Ограничение параллелизма (максимум 3 сессии)
+- Ограничение параллелизма (максимум 2 сессии)
 - Обработку ошибок в sweeper
 
 **Источник:** `agent_service/tests/test_agent_system_sessions.py`
@@ -119,7 +119,7 @@ docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/ -
 
 ```bash
 # Только unit тесты сессий
-docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/test_agent_session.py tests/test_agent_system_sessions.py -v
+docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/test_agent_session_updated.py tests/test_agent_system_sessions.py -v
 
 # Только пайплайны
 docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/pipeline/ -v
@@ -129,10 +129,10 @@ docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/pi
 
 ### Успешное выполнение
 
-Все 33 unit теста проходят успешно:
+Все 32 unit теста проходят успешно:
 
 ```
-============================= 33 passed, 1 warning in 2.02s ==============================
+============================= 32 passed, 1 warning in 2.02s ==============================
 ```
 
 **Покрытие:**
@@ -170,7 +170,7 @@ docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/ad
 
 ### Время выполнения
 
-- **Unit тесты**: ~2 секунды (33 теста)
+- **Unit тесты**: ~2 секунды (32 теста)
 - **Создание сессии**: < 1 мс
 - **Запуск задачи**: ~2-5 сек (зависит от внешних сервисов)
 - **Очистка сессий**: < 100 мс (100 сессий)

@@ -115,7 +115,7 @@ process_answer → (END | evaluate_quiz)
   - `default_provider`: "openai" | "openrouter" | "mistral" | "zai"
   - `openai_api_key`, `openrouter_api_key`, `mistral_api_key`, `zai_api_key` (SecretStr)
   - `web_ui_url`, `web_ui_backend_url`
-  - `session_ttl_seconds`, `concurrency_limit`
+  - `session_ttl_seconds`, `concurrency_limit` (дефолт: 2)
   - `test_generator_service_url`, `rag_service_url`
 
 #### App Settings JSON
@@ -124,7 +124,7 @@ process_answer → (END | evaluate_quiz)
   "web_ui_url": "http://localhost:8150",
   "session_ttl_seconds": 600,
   "concurrency_limit": 2,
-  "test_generator_service_url": "http://api:52812",
+  "test_generator_service_url": "http://test-generator-api:8000",
   "rag_service_url": "http://rag-api:8000"
 }
 ```
@@ -142,7 +142,7 @@ process_answer → (END | evaluate_quiz)
 - **RAG Service**: `http://rag-api:8000`
   - `POST /search` — поиск документов
   - `POST /rag` — генерация ответа
-- **Test Generator**: `http://api:52812`
+- **Test Generator**: `http://test-generator-api:8000`
   - `POST /api/generate` — генерация квиза
   - `POST /api/grade` — оценка ответов
 
@@ -266,7 +266,7 @@ END
 ## Тестирование
 
 ### Unit тесты
-- `tests/test_agent_session.py` — 18 тестов
+- `tests/test_agent_session_updated.py` — 17 тестов
 - `tests/test_agent_system_sessions.py` — 15 тестов
 
 ### Integration тесты
