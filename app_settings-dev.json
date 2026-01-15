@@ -11,11 +11,11 @@
   "emb_batch_size": 64,
   "log_level": "INFO",
   "rag_service_url": "http://rag-api:8000",
-  "test_generator_service_url": "http://llm-tester-api:52812",
+  "test_generator_service_url": "http://test-generator-api:8000",
   "is_dev_version": true,
-  "agent_port": 8250,
-  "web_ui_url": "http://web_ui_back-dev:8351",
-  "web_ui_backend_url": "http://web_ui_back-dev:8351",
+  "agent_port": 8270,
+  "web_ui_url": "http://web-backend:8151",
+  "web_ui_backend_url": "http://web-backend:8151",
   "session_ttl_seconds": 600,
   "concurrency_limit": 2
 }

@@ -17,7 +17,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies
-RUN uv sync --frozen
+RUN uv sync --locked
 
 # Set Python path
 ENV PYTHONPATH=/app
@@ -26,7 +26,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Expose port
-EXPOSE 8250
+EXPOSE 8270
 
 # Start command (will be overridden by docker-compose)
 CMD ["uv", "run", "python", "app.py", "--settings", "app_settings-dev.json"]

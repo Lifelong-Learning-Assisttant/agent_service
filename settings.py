@@ -92,6 +92,7 @@ class LLMSettings(BaseSettings):
     web_ui_url: str = Field(default="http://localhost:8150")  # URL Web UI для отправки progress-событий
     web_ui_backend_url: str = Field(default="http://localhost:8351")  # URL Web UI Backend для отправки progress-событий
     concurrency_limit: int = Field(default=2)  # Максимальное количество параллельных сессий
+    agent_port: int = Field(default=8270) # Порт агента
 
     def __init__(self, **kwargs):
         """Инициализирует настройки, загружая значения из app_settings.json."""

@@ -813,7 +813,13 @@ class AgentSystem:
             try:
                 structured_chat = chat.with_structured_output(IntentModel)
                 result = structured_chat.invoke([HumanMessage(content=prompt)])
-                return result.get("intent", "general")
+                # Если result - это IntentModel (Pydantic), используем атрибут .intent
+                if hasattr(result, "intent"):
+                    return result.intent
+                # Если result - это словарь
+                if isinstance(result, dict):
+                    return result.get("intent", "general")
+                return "general"
             except Exception as se:
                 self.log.warning(f"Structured output failed, falling back to text parsing: {se}")
                 # Fallback к обычному текстовому ответу и парсингу

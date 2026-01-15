@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile-dev
     ports:
-      - "8250:8250"
+      - "8270:8270"
     volumes:
       - .:/app
       - /app/__pycache__
@@ -14,21 +14,24 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - RAG_SERVICE_URL=http://rag-api:8000
-      - TEST_GENERATOR_SERVICE_URL=http://api:52812
-      - WEB_UI_URL=http://web_ui_back-dev:8351
+      - TEST_GENERATOR_SERVICE_URL=http://test-generator-api:8000
+      - WEB_UI_URL=http://web-backend:8151
     command: uv run python app.py --settings app_settings-dev.json
     networks:
-      - web_ui_network_dev
-      - rag_network
-      - test_generator_network
+      web_ui_network:
+        aliases:
+          - agent-service
+      rag_rag_network:
+        aliases:
+          - agent-service
+      test_generator_default:
+        aliases:
+          - agent-service
 
 networks:
-  web_ui_network_dev:
-    driver: bridge
-    name: web_ui_network_dev
-  rag_network:
-    external: true
+  web_ui_network:
+    name: web_ui_network
+  rag_rag_network:
     name: rag_rag_network
-  test_generator_network:
-    external: true
+  test_generator_default:
     name: test_generator_default
