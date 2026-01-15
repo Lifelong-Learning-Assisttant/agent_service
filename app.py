@@ -109,10 +109,10 @@ async def get_messages(session_id: str = "default"):
                 if question:
                     messages.append({"role": "user", "content": question})
                     logger.info(f"DEBUG: Added user: {question[:50]}...")
-            elif event["level"] == "info" and event["step"] != "final_answer":
-                # Системное сообщение о прогрессе
+            elif event["level"] in ["info", "error", "warn"] and event["step"] != "final_answer":
+                # Системное сообщение о прогрессе или ошибке
                 messages.append({"role": "system", "content": event["message"]})
-                logger.info(f"DEBUG: Added system: {event['message'][:50]}...")
+                logger.info(f"DEBUG: Added system ({event['level']}): {event['message'][:50]}...")
             elif event["step"] == "final_answer":
                 # Финальный ответ агента
                 final_answer = event["meta"].get("final_answer", "")

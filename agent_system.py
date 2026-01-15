@@ -805,16 +805,24 @@ class AgentSystem:
         # Добавляем инструкцию для структурированного вывода
         prompt += "\n\nВерни только JSON с полем intent."
         
-        # Получаем чат-модель со структурированным выводом
+        # Получаем чат-модель
         chat = self.client.create_chat(temperature=0.1)
-        structured_chat = chat.with_structured_output(IntentModel)
         
         try:
-            # Вызываем модель
-            result = structured_chat.invoke([HumanMessage(content=prompt)])
-            
-            # Возвращаем intent (result - это словарь)
-            return result.get("intent", "general")
+            # Пробуем структурированный вывод
+            try:
+                structured_chat = chat.with_structured_output(IntentModel)
+                result = structured_chat.invoke([HumanMessage(content=prompt)])
+                return result.get("intent", "general")
+            except Exception as se:
+                self.log.warning(f"Structured output failed, falling back to text parsing: {se}")
+                # Fallback к обычному текстовому ответу и парсингу
+                res = chat.invoke([HumanMessage(content=prompt + "\nОтветь только одним словом: general, rag_answer, generate_quiz или evaluate_quiz.")])
+                content = res.content.lower()
+                for possible_intent in ["rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]:
+                    if possible_intent in content:
+                        return possible_intent
+                return "general"
         except Exception as e:
             self.log.error(f"Error in structured intent determination: {e}")
             # В случае ошибки возвращаем general по умолчанию

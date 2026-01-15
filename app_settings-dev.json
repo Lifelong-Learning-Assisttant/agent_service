@@ -1,7 +1,6 @@
 {
-  "default_provider": "zai",
-  "zai_base_url": "https://api.z.ai/api/coding/paas/v4",
-  "zai_chat_model": "glm-4.6v",
+  "default_provider": "openrouter",
+  "openrouter_chat_model": "xiaomi/mimo-v2-flash:free",
   "openrouter_base_url": "https://openrouter.ai/api/v1",
   "request_timeout_s": 60.0,
   "connect_timeout_s": 10.0,
@@ -15,8 +14,8 @@
   "test_generator_service_url": "http://llm-tester-api:52812",
   "is_dev_version": true,
   "agent_port": 8250,
-  "web_ui_url": "http://web_ui_backend:8351",
-  "web_ui_backend_url": "http://web_ui_backend:8351",
+  "web_ui_url": "http://web_ui_back-dev:8351",
+  "web_ui_backend_url": "http://web_ui_back-dev:8351",
   "session_ttl_seconds": 600,
   "concurrency_limit": 2
 }
