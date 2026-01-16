@@ -8,6 +8,8 @@ from collections import deque
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
 
 from llm_service.llm_client import LLMClient
 from settings import get_settings
@@ -769,9 +771,8 @@ class AgentSystem:
             return "rag_answer"
 
     def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]:
-        """Определяет намерение пользователя с использованием LLM через PydanticOutputParser для гарантированного вывода."""
+        """Определяет намерение пользователя с использованием JsonOutputParser для универсальности."""
         from pydantic import BaseModel, Field
-        from langchain_core.messages import HumanMessage
         from typing import Literal
         import os
         
@@ -798,46 +799,38 @@ class AgentSystem:
                 "Вопрос: {question}\n\n"
                 "Выбери наиболее подходящий вариант: general, rag_answer, generate_quiz или evaluate_quiz."
             )
+
+        # Создаем парсер на основе Pydantic модели
+        parser = JsonOutputParser(pydantic_object=IntentModel)
         
-        # Форматируем промпт с вопросом
-        prompt = base_prompt.format(question=question)
+        # Создаем шаблон промпта с инструкциями по форматированию
+        prompt_template = PromptTemplate(
+            template="{base_prompt}\n\n{format_instructions}",
+            input_variables=["base_prompt"],
+            partial_variables={"format_instructions": parser.get_format_instructions()}
+        )
         
-        # Добавляем инструкцию для структурированного вывода
-        prompt += "\n\nВерни только JSON с полем intent."
+        # Формируем финальный промпт
+        final_prompt = prompt_template.format(base_prompt=base_prompt.format(question=question))
         
         # Получаем чат-модель
         chat = self.client.create_chat(temperature=0.1)
         
         try:
-            # Пробуем структурированный вывод
-            try:
-                # Для OpenRouter и бесплатных моделей часто нет поддержки structured output
-                # Поэтому сразу пробуем fallback, если есть подозрение, или просто оборачиваем в try
-                if self.client.provider == "openrouter" and "free" in self.client.model_name:
-                     # Можно попробовать, но быть готовым к ошибке
-                     pass
-
-                structured_chat = chat.with_structured_output(IntentModel)
-                result = structured_chat.invoke([HumanMessage(content=prompt)])
-                # Если result - это IntentModel (Pydantic), используем атрибут .intent
-                if hasattr(result, "intent"):
-                    return result.intent
-                # Если result - это словарь
-                if isinstance(result, dict):
-                    return result.get("intent", "general")
-                return "general"
-            except Exception as se:
-                self.log.warning(f"Structured output failed (or skipped), falling back to text parsing: {se}")
-                # Fallback к обычному текстовому ответу и парсингу
-                res = chat.invoke([HumanMessage(content=prompt + "\nОтветь только одним словом: general, rag_answer, generate_quiz или evaluate_quiz.")])
-                content = res.content.lower()
-                for possible_intent in ["rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]:
-                    if possible_intent in content:
-                        return possible_intent
-                return "general"
+            # Вызываем модель
+            res = chat.invoke([HumanMessage(content=final_prompt)])
+            
+            # Парсим результат
+            parsed_result = parser.parse(res.content)
+            
+            # Валидируем через Pydantic (хотя parser.parse уже возвращает dict, полезно убедиться в типах)
+            intent_data = IntentModel(**parsed_result)
+            return intent_data.intent
+            
         except Exception as e:
-            self.log.error(f"Error in structured intent determination: {e}")
-            # В случае ошибки возвращаем general по умолчанию
+            self.log.warning(f"Intent determination failed or parsing error: {e}. Fallback to 'general'.")
+            # В случае любой ошибки (модель вернула мусор, невалидный JSON, или галлюцинации)
+            # мы безопасно откатываемся к 'general', чтобы не ломать флоу пользователя.
             return "general"
 
     # ---------- Сборка графа ----------
