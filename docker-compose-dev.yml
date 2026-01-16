@@ -31,7 +31,10 @@ services:
 networks:
   web_ui_network:
     name: web_ui_network
+    external: true
   rag_rag_network:
     name: rag_rag_network
+    external: true
   test_generator_default:
     name: test_generator_default
+    external: true
