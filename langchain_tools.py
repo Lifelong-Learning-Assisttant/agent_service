@@ -12,7 +12,7 @@ from langchain.tools import Tool
 from settings import get_settings
 
 log = logging.getLogger(__name__)
-settings = get_settings()
+# settings = get_settings() # Удаляем глобальную инициализацию
 
 
 async def rag_search_async(query: str, top_k: int = 5, use_hyde: bool = False) -> str:
@@ -27,6 +27,7 @@ async def rag_search_async(query: str, top_k: int = 5, use_hyde: bool = False) -
     Returns:
         Результаты поиска в формате JSON
     """
+    settings = get_settings()
     rag_service_url = settings.rag_service_url
     if not rag_service_url:
         log.warning("RAG service not configured")
@@ -66,6 +67,7 @@ async def rag_generate_async(query: str, top_k: int = 5, temperature: float = 0.
     Returns:
         Сгенерированный ответ в формате JSON
     """
+    settings = get_settings()
     rag_service_url = settings.rag_service_url
     if not rag_service_url:
         log.warning("RAG service not configured")
@@ -104,6 +106,7 @@ async def generate_exam_async(markdown_content: str, config: Dict[str, Any] = No
     Returns:
         Сгенерированный экзамен в формате JSON
     """
+    settings = get_settings()
     test_generator_service_url = settings.test_generator_service_url
     if not test_generator_service_url:
         log.warning("Test generator service not configured")
@@ -140,6 +143,7 @@ async def grade_exam_async(exam_id: str, answers: List[Dict[str, Any]]) -> str:
     Returns:
         Результаты оценки в формате JSON
     """
+    settings = get_settings()
     test_generator_service_url = settings.test_generator_service_url
     if not test_generator_service_url:
         log.warning("Test generator service not configured")

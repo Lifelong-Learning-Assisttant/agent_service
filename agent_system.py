@@ -1,4 +1,4 @@
-from typing import Dict, Optional, TypedDict, Literal, List, Set
+from typing import Dict, Optional, TypedDict, Literal, List, Set, Any
 import os
 import asyncio
 import uuid
@@ -23,8 +23,10 @@ class AgentState(TypedDict, total=False):
     """Общее состояние исполнения графа."""
 
     question: str
-    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]
-    documents: List[str]
+    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering", "skip_question"]
+    documents: List[Dict[str, Any]] # Список унифицированных документов {content, source, score}
+    prepared_material: str          # Синтезированный "Golden Source" в Markdown
+    is_relevant: bool               # Флаг достаточности информации
     
     # Поля для интерактивного квиза
     quiz_questions: List[Dict[str, str]]  # Список {"question": "...", "answer": "..."}
@@ -32,6 +34,7 @@ class AgentState(TypedDict, total=False):
     user_answers: List[str]               # Ответы пользователя
     
     final_answer: str
+    thought: str                          # Рассуждения модели (reasoning)
 
 
 # ---------- Агентная система ----------
@@ -189,7 +192,7 @@ class AgentSystem:
     # ---------- Узлы графа ----------
     async def planner_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Определяет, продолжаем ли мы квиз или анализируем новый запрос.
+        Двухрежимный планировщик: Idle vs Quiz Active.
         """
         import time
 
@@ -197,23 +200,35 @@ class AgentSystem:
         self.log.info("start:planner | question_len=%d | session=%s", len(q), session is not None)
         t0 = time.perf_counter()
 
-        # Если квиз уже начат, принудительно идем по пути ответов
-        quiz_active = state.get("quiz_questions") is not None and len(state.get("quiz_questions", [])) > 0
-        current_idx = state.get("current_quiz_index", 0)
-        
-        # Уведомление о начале
-        if session:
-            await session.notify_ui(
-                step="start_planner",
-                message="Анализ запроса и определение намерения",
-                tool="planner",
-                level="info"
-            )
-
-        if quiz_active and current_idx < len(state.get("quiz_questions", [])):
-            intent = "quiz_answering"
+        # 1. Проверка CLI-команд (имеют высший приоритет в любом режиме)
+        if q == "/finish_quizz":
+            intent = "evaluate_quiz"
+            self.log.info("CLI_CMD: /finish_quizz detected")
+        elif q == "/skip_question":
+            intent = "skip_question"
+            self.log.info("CLI_CMD: /skip_question detected")
         else:
-            intent = self._determine_intent(q)
+            # 2. Проверка режима (Квиз активен?)
+            quiz_questions = state.get("quiz_questions", [])
+            current_idx = state.get("current_quiz_index", 0)
+            quiz_active = quiz_questions and len(quiz_questions) > 0 and current_idx < len(quiz_questions)
+
+            if quiz_active:
+                # В режиме квиза любой ввод — это либо ответ, либо уточнение (RAG)
+                # Мы используем легкий интент-анализ, чтобы понять, хочет ли пользователь уточнить теорию
+                intent = self._determine_intent(q, mode="quiz_active")
+                self.log.info("Planner (QuizMode): determined intent=%s", intent)
+            else:
+                # Обычный режим
+                if session:
+                    await session.notify_ui(
+                        step="start_planner",
+                        message="Анализ запроса и определение намерения",
+                        tool="planner",
+                        level="info"
+                    )
+                intent = self._determine_intent(q, mode="idle")
+                self.log.info("Planner (IdleMode): determined intent=%s", intent)
 
         # Уведомление об успехе
         if session:
@@ -231,42 +246,48 @@ class AgentSystem:
 
     async def retrieve_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Ищет документы в RAG.
-        Отправляет уведомления в UI.
+        Ищет сырые документы в RAG.
         """
         import time
+        import json
 
         q = (state.get("question") or "").strip()
         self.log.info("start:retrieve | q_len=%d", len(q))
         t0 = time.perf_counter()
 
-        # Уведомление о начале
         if session:
             await session.notify_ui(
                 step="start_retrieval",
-                message="Поиск документов в RAG",
+                message="Поиск в базе знаний Яндекса...",
                 tool="rag_search",
                 level="info"
             )
 
-        result = await rag_search_async(q)
+        # Вызываем только поиск (без генерации)
+        search_result_json = await rag_search_async(q, top_k=5)
         
-        # Парсим JSON результат
+        docs = []
         try:
-            import json
-            docs_data = json.loads(result)
-            if isinstance(docs_data, dict) and "error" in docs_data:
-                docs = []
-            else:
-                docs = docs_data if isinstance(docs_data, list) else [docs_data]
-        except:
-            docs = []
+            data = json.loads(search_result_json)
+            # RAG сервис возвращает SearchResponse с полем 'documents'
+            if isinstance(data, dict) and "documents" in data:
+                raw_docs = data["documents"]
+                sources = data.get("sources", [])
+                # Унифицируем формат
+                for i, content in enumerate(raw_docs):
+                    docs.append({
+                        "content": content,
+                        "source": sources[i] if i < len(sources) else "Учебник Яндекса",
+                        "score": 1.0, # В будущем будем брать реальный score
+                        "type": "handbook"
+                    })
+        except Exception as e:
+            self.log.error("Failed to parse RAG search result: %s", e)
 
-        # Уведомление об успехе
         if session:
             await session.notify_ui(
                 step="retrieval_done",
-                message=f"Найдено документов: {len(docs)}",
+                message=f"Найдено фрагментов: {len(docs)}",
                 tool="rag_search",
                 level="info",
                 meta={"docs_count": len(docs)}
@@ -275,6 +296,71 @@ class AgentSystem:
         dt = (time.perf_counter() - t0) * 1000
         self.log.info("done:retrieve | docs_count=%d | %.1f ms", len(docs), dt)
         return {**state, "documents": docs}
+
+    async def prepare_material_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
+        """
+        Узел-редактор: синтезирует Golden Source Markdown из всех источников.
+        """
+        import time
+        import os
+
+        self.log.info("start:prepare_material")
+        t0 = time.perf_counter()
+
+        if session:
+            await session.notify_ui(
+                step="start_prepare_material",
+                message="Синтез и проверка учебных материалов...",
+                tool="prepare_material",
+                level="info"
+            )
+
+        docs = state.get("documents", [])
+        if not docs:
+            self.log.warning("No documents found for material preparation")
+            return {**state, "prepared_material": "", "is_relevant": False}
+
+        # Формируем список чанков для LLM
+        chunks_input = ""
+        for i, doc in enumerate(docs):
+            source_info = doc.get("source", "Unknown")
+            if isinstance(source_info, dict):
+                source_info = source_info.get("title") or source_info.get("url") or str(source_info)
+            
+            chunks_input += f"--- ФРАГМЕНТ {i+1} (Источник: {source_info}) ---\n{doc['content']}\n\n"
+
+        # Загружаем промпт
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "prepare_quiz_material.txt")
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            template = f.read().strip()
+
+        final_prompt = template.format(chunks=chunks_input)
+
+        # Вызываем LLM для синтеза (temperature=0 для стабильности)
+        chat = self.client.create_chat(temperature=0)
+        res = chat.invoke([HumanMessage(content=final_prompt)])
+        golden_markdown = res.content
+
+        # Ограничиваем размер материала для стабильности генератора тестов
+        if len(golden_markdown) > 5000:
+            self.log.warning(f"Material too long ({len(golden_markdown)}), truncating...")
+            golden_markdown = golden_markdown[:5000] + "\n\n... [Материал обрезан из-за объема]"
+
+        # Проверка релевантности (упрощенная: если LLM вернула слишком короткий текст или отказ)
+        is_relevant = len(golden_markdown) > 50 and "не нашел" not in golden_markdown.lower()
+
+        if session:
+            await session.notify_ui(
+                step="prepare_material_done",
+                message="Материал подготовлен и структурирован",
+                tool="prepare_material",
+                level="info"
+            )
+
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:prepare_material | len=%d | relevant=%s | %.1f ms", len(golden_markdown), is_relevant, dt)
+        
+        return {**state, "prepared_material": golden_markdown, "is_relevant": is_relevant}
 
     async def direct_answer_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
@@ -329,127 +415,120 @@ class AgentSystem:
 
     async def rag_answer_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Генерирует ответ на основе документов через RAG сервис.
-        Отправляет уведомления в UI.
+        Генерирует финальный ответ пользователю, используя подготовленный Markdown.
         """
         import time
-        import json
-        import os
 
-        q = (state.get("question") or "").strip()
-        self.log.info("start:rag_answer | q_len=%d", len(q))
+        self.log.info("start:rag_answer")
         t0 = time.perf_counter()
 
-        # Уведомление о начале
+        if not state.get("is_relevant"):
+            answer = "К сожалению, в учебнике Яндекса не нашлось достаточно информации, чтобы точно ответить на этот вопрос. Попробуйте переформулировать запрос."
+            return {**state, "final_answer": answer}
+
         if session:
             await session.notify_ui(
                 step="start_rag_answer",
-                message="Генерация ответа на основе найденных документов",
+                message="Формирование ответа на основе материалов...",
                 tool="rag_generate",
                 level="info"
             )
 
-        # Используем RAG сервис для генерации ответа
-        result = await rag_generate_async(q)
-        
-        # Парсим JSON результат
-        try:
-            result_data = json.loads(result)
-            if isinstance(result_data, dict) and "error" in result_data:
-                raw_answer = f"Ошибка RAG: {result_data['error']}"
-            elif isinstance(result_data, dict) and "answer" in result_data:
-                raw_answer = result_data["answer"]
-            else:
-                raw_answer = str(result_data)
-        except:
-            raw_answer = "Ошибка при обработке ответа от RAG сервиса"
+        q = state.get("question", "")
+        context = state.get("prepared_material", "")
 
-        # Логируем полученный ответ для отладки
-        self.log.info("RAG raw answer: %s", raw_answer[:200] + "..." if len(raw_answer) > 200 else raw_answer)
+        prompt = (
+            f"Используя предоставленный ниже учебный материал, подробно ответь на вопрос пользователя.\n"
+            f"Вопрос: {q}\n\n"
+            f"МАТЕРИАЛ:\n{context}\n\n"
+            f"Твой ответ должен быть структурированным, точным и сохранять все формулы."
+        )
 
-        # Уведомление о переформатировании
-        if session:
-            await session.notify_ui(
-                step="start_reformatting",
-                message="Переформатирование ответа с правильными формулами",
-                tool="llm_reformat",
-                level="info"
-            )
-
-        # Загружаем промпт для переформатирования
-        reformat_prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "reformat_latex.txt")
-        with open(reformat_prompt_path, "r", encoding="utf-8") as f:
-            reformat_prompt_template = f.read().strip()
-        
-        # Формируем промпт для LLM
-        reformat_prompt = reformat_prompt_template + "\n\n" + raw_answer
-        
-        # Используем LLM для переформатирования
-        # Используем invoke для получения метаданных reasoning
-        chat = self.client.create_chat(temperature=0.1)
-        res = chat.invoke([HumanMessage(content=reformat_prompt)])
+        chat = self.client.create_chat(temperature=0.2)
+        res = chat.invoke([HumanMessage(content=prompt)])
         answer = res.content
         
         thought = ""
         if hasattr(res, 'additional_kwargs'):
             thought = res.additional_kwargs.get('reasoning_content', '')
-        
-        # Логируем результат переформатирования
-        self.log.info("Reformatted answer: %s", answer[:200] + "..." if len(answer) > 200 else answer)
 
-        # Уведомление об успехе
+        # Добавляем список источников из state["documents"]
+        raw_sources = []
+        for doc in state.get("documents", []):
+            src = doc.get("source", "Учебник Яндекса")
+            if isinstance(src, dict):
+                src = src.get("title") or src.get("url") or str(src)
+            raw_sources.append(str(src))
+            
+        sources = list(set(raw_sources))
+        if sources:
+            answer += "\n\n**Источники:**\n" + "\n".join([f"- {s}" for s in sources])
+
+        # Если квиз активен, возвращаем контекст вопроса
+        quiz_questions = state.get("quiz_questions", [])
+        current_idx = state.get("current_quiz_index", 0)
+        if quiz_questions and current_idx < len(quiz_questions):
+            current_q = quiz_questions[current_idx]["q"]
+            answer = (
+                f"{answer}\n\n"
+                f"--- [SYSTEM: QUIZ_CONTEXT_RESUMED] ---\n"
+                f"**Напоминаю текущий вопрос квиза (№{current_idx + 1}):**\n"
+                f"{current_q}"
+            )
+
         if session:
             await session.notify_ui(
                 step="rag_answer_done",
-                message="Ответ на основе RAG сгенерирован и отформатирован",
+                message="Ответ сформирован",
                 tool="rag_generate",
-                level="info",
-                meta={"length": len(answer)}
+                level="info"
             )
 
         dt = (time.perf_counter() - t0) * 1000
-        self.log.info("done:rag_answer | out_len=%d | %.1f ms", len(answer or ""), dt)
+        self.log.info("done:rag_answer | %.1f ms", dt)
         return {**state, "final_answer": answer, "thought": thought}
 
     async def create_quiz_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
         """
-        Генерирует квиз и задает ПЕРВЫЙ вопрос.
+        Генерирует квиз на основе подготовленного материала.
         """
         import time
         import json
 
-        q = (state.get("question") or "").strip()
-        self.log.info("start:create_quiz | q_len=%d", len(q))
+        self.log.info("start:create_quiz")
         t0 = time.perf_counter()
 
-        # Уведомление о начале
         if session:
             await session.notify_ui(
                 step="start_generate_exam",
-                message="Генерирую вопросы по материалам...",
+                message="Генерация вопросов квиза...",
                 tool="generate_exam",
                 level="info"
             )
 
-        # Получаем документы и преобразуем в строку
-        docs = state.get("documents", [])
-        if isinstance(docs, list) and len(docs) > 0:
-            # Если документы - это список словарей, извлекаем текст
-            if isinstance(docs[0], dict):
-                context = "\n".join([doc.get("content", "") for doc in docs if isinstance(doc, dict)])
-            else:
-                context = "\n".join([str(doc) for doc in docs])
-        else:
-            context = ""
-        
-        # Если нет контекста, создаем заглушку
+        context = state.get("prepared_material", "")
         if not context:
-            context = "Квиз по машинному обучени и глубокому обучению"
+            context = "# Общий квиз по ML\n\n## Основы\nМашинное обучение — это..."
+
+        # Попытка 1: Используем специализированный сервис генерации
+        # Проверяем, просил ли пользователь только варианты ответов
+        q_lower = state.get("question", "").lower()
+        config = None
+        if "вариант" in q_lower or "choice" in q_lower:
+            config = {
+                "total_questions": 3,
+                "single_choice_ratio": 0.7,
+                "multiple_choice_ratio": 0.3,
+                "open_ended_ratio": 0.0,
+                "language": "ru"
+            }
+            self.log.info("Quiz config: forced choice questions only")
+
+        raw_quiz = await generate_exam_async(context, config=config)
         
-        # Попытка 1: Инструмент выдает вопросы и ответов
-        raw_quiz = await generate_exam_async(context)
-        
-        # Парсим результат инструмента в структурированный список
+        if "error" in raw_quiz:
+            self.log.error(f"Test generator error: {raw_quiz}")
+
         questions = await self._parse_quiz_result(raw_quiz)
         
         # Если парсинг не удался, пробуем сгенерировать через LLM напрямую
@@ -607,6 +686,7 @@ class AgentSystem:
 
         idx = state.get("current_quiz_index", 0)
         questions = state.get("quiz_questions", [])
+        intent = state.get("intent")
         
         # Инициализируем answers как пустой список если None
         answers = state.get("user_answers")
@@ -614,7 +694,11 @@ class AgentSystem:
             answers = []
 
         # 1. Сохраняем ответ пользователя на ТЕКУЩИЙ вопрос
-        user_reply = state.get("question", "")
+        if intent == "skip_question":
+            user_reply = "[SYSTEM: SKIPPED]"
+        else:
+            user_reply = state.get("question", "")
+            
         answers.append(user_reply)
 
         # 2. Переходим к следующему индексу
@@ -734,11 +818,17 @@ class AgentSystem:
         # Fallback: используем LLM для парсинга
         prompt = (
             "Преобразуй этот текст квиза в строгий JSON список объектов с ключами 'q' (вопрос) и 'a' (правильный ответ). "
-            "Верни ТОЛЬКО JSON.\n\n" + raw_text
+            "Верни ТОЛЬКО чистый JSON без markdown разметки.\n\n" + raw_text
         )
         res = self.client.generate([prompt], temperature=0)[0]
         try:
-            return json.loads(res)
+            # Очищаем от возможных ```json ... ```
+            cleaned_res = res.strip()
+            if cleaned_res.startswith("```json"):
+                cleaned_res = cleaned_res[7:]
+            if cleaned_res.endswith("```"):
+                cleaned_res = cleaned_res[:-3]
+            return json.loads(cleaned_res.strip())
         except:
             self.log.error("Failed to parse quiz JSON even with LLM")
             return [{"q": "Ошибка парсинга. Попробуйте еще раз.", "a": ""}]
@@ -754,7 +844,7 @@ class AgentSystem:
             return "retrieve"
         elif intent == "generate_quiz":
             return "retrieve"
-        elif intent == "quiz_answering":
+        elif intent == "quiz_answering" or intent == "skip_question":
             return "process_answer"
         elif intent == "evaluate_quiz":
             return "evaluate_quiz"
@@ -770,37 +860,25 @@ class AgentSystem:
         else:
             return "rag_answer"
 
-    def _determine_intent(self, question: str) -> Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"]:
-        """Определяет намерение пользователя с использованием JsonOutputParser для универсальности."""
+    def _determine_intent(self, question: str, mode: str = "idle") -> str:
+        """Определяет намерение пользователя в зависимости от режима."""
         from pydantic import BaseModel, Field
         from typing import Literal
-        import os
         
-        # Определяем Pydantic модель для структурированного вывода
         class IntentModel(BaseModel):
-            """Модель намерения пользователя."""
-            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering"] = Field(
-                description="Намерение пользователя: general для общих вопросов, rag_answer для ответов из учебника, generate_quiz для создания квиза, evaluate_quiz для оценки результатов, quiz_answering для ответов на вопросы квиза"
-            )
-        
-        # Загружаем промпт из файла
-        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "intent_determination.txt")
-        if os.path.exists(prompt_path):
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                base_prompt = f.read().strip()
-        else:
-            # Если файл не найден, используем промпт по умолчанию
-            base_prompt = (
-                "Определи намерение пользователя. Возможные варианты:\n"
-                "1. rag_answer - если пользователь задает вопрос по машинному обучению, глубокому обучению, нейронным сетям, ML, DL, AI, или упоминает учебник Яндекса.\n"
-                "2. generate_quiz - если пользователь хочет пройти квиз, тест, викторину.\n"
-                "3. evaluate_quiz - если пользователь хочет оценить результаты прохождения квиза. Результаты прохождения берем из памяти\n"
-                "4. general - если пользователь хочет просто поговорить, задать общий вопрос, или поболтать без конкретной темы или все остальное что не относится к первым трем.\n\n"
-                "Вопрос: {question}\n\n"
-                "Выбери наиболее подходящий вариант: general, rag_answer, generate_quiz или evaluate_quiz."
+            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering", "skip_question"] = Field(
+                description="Намерение пользователя"
             )
 
-        # Создаем парсер на основе Pydantic модели
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "intent_determination.txt")
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            base_prompt = f.read().strip()
+
+        # Добавляем контекст режима в промпт
+        mode_context = f"\nТЕКУЩИЙ РЕЖИМ: {mode.upper()}\n"
+        if mode == "quiz_active":
+            mode_context += "ВНИМАНИЕ: Пользователь сейчас проходит тест. Любой обычный текст скорее всего является ответом на вопрос (quiz_answering)."
+        
         parser = JsonOutputParser(pydantic_object=IntentModel)
         
         # Создаем шаблон промпта с инструкциями по форматированию
@@ -837,25 +915,21 @@ class AgentSystem:
     def _build_graph(self):
         """
         Собирает и компилирует граф.
-        Returns:
-            Скомпилированный граф (Runnable).
         """
         self.log.debug("build_graph: begin")
         builder = StateGraph(AgentState)
         
-        # Оборачиваем узлы для поддержки session из config
         def wrap_node(node_func):
-            """Оборачивает узел для поддержки session из конфигурации."""
             async def wrapped_node(state: AgentState, config: Optional[Dict] = None):
                 session = None
                 if config and "configurable" in config:
                     session = config["configurable"].get("session")
-                self.log.debug(f"wrap_node: {node_func.__name__}, session={session is not None}")
                 return await node_func(state, session)
             return wrapped_node
         
         builder.add_node("planner", wrap_node(self.planner_node))
         builder.add_node("retrieve", wrap_node(self.retrieve_node))
+        builder.add_node("prepare_material", wrap_node(self.prepare_material_node))
         builder.add_node("direct_answer", wrap_node(self.direct_answer_node))
         builder.add_node("rag_answer", wrap_node(self.rag_answer_node))
         builder.add_node("create_quiz", wrap_node(self.create_quiz_node))
@@ -864,7 +938,7 @@ class AgentSystem:
 
         builder.add_edge(START, "planner")
         
-        # Переходы после планировщика
+        # 1. После Planner: либо прямой ответ, либо поиск, либо обработка квиза
         builder.add_conditional_edges(
             "planner",
             self.route_after_planner,
@@ -876,9 +950,12 @@ class AgentSystem:
             }
         )
         
-        # Переходы после retrieve
+        # 2. После поиска ВСЕГДА идем на подготовку материала (Golden Source)
+        builder.add_edge("retrieve", "prepare_material")
+
+        # 3. После подготовки решаем: дать ответ или создать квиз
         builder.add_conditional_edges(
-            "retrieve",
+            "prepare_material",
             self.route_after_retriever,
             {
                 "rag_answer": "rag_answer",
@@ -886,11 +963,10 @@ class AgentSystem:
             }
         )
         
-        # Переходы после обработки ответа: либо к следующему вопросу (END и ждем ввода),
-        # либо к оценке (если intent сменился на evaluate_quiz)
+        # 4. Процесс квиза
         builder.add_conditional_edges(
             "process_answer",
-            lambda s: "evaluate_quiz" if s["intent"] == "evaluate_quiz" else END,
+            lambda s: "evaluate_quiz" if s.get("intent") == "evaluate_quiz" else END,
             {
                 "evaluate_quiz": "evaluate_quiz",
                 END: END
