@@ -336,8 +336,22 @@ class AgentSystem:
 
         final_prompt = template.format(chunks=chunks_input)
 
+        # Извлекаем настройки из состояния (для RAG используем настройки rag)
+        app_settings = state.get("app_settings")
+        provider = None
+        model = None
+        if app_settings and "rag" in app_settings:
+            provider = app_settings["rag"].get("provider")
+            model = app_settings["rag"].get("model")
+
         # Вызываем LLM для синтеза (temperature=0 для стабильности)
-        chat = self.client.create_chat(temperature=0)
+        if provider:
+            # Создаем временный клиент с нужным провайдером
+            temp_client = LLMClient(provider=provider)
+            chat = temp_client.create_chat(model=model, temperature=0)
+        else:
+            chat = self.client.create_chat(temperature=0)
+            
         res = chat.invoke([HumanMessage(content=final_prompt)])
         golden_markdown = res.content
 
@@ -386,8 +400,21 @@ class AgentSystem:
             "Ответь кратко и по делу, оформи в 1–2 абзаца; при необходимости добавь список.\n\n"
             f"Вопрос: {q}"
         )
+        # Извлекаем настройки из состояния (для прямого ответа используем настройки agent)
+        app_settings = state.get("app_settings")
+        provider = None
+        model = None
+        if app_settings and "agent" in app_settings:
+            provider = app_settings["agent"].get("provider")
+            model = app_settings["agent"].get("model")
+
         # Используем invoke для доступа к метаданным (reasoning)
-        chat = self.client.create_chat(temperature=0.2)
+        if provider:
+            temp_client = LLMClient(provider=provider)
+            chat = temp_client.create_chat(model=model, temperature=0.2)
+        else:
+            chat = self.client.create_chat(temperature=0.2)
+            
         res = chat.invoke([HumanMessage(content=prompt)])
         answer = res.content
         
@@ -444,7 +471,20 @@ class AgentSystem:
             f"Твой ответ должен быть структурированным, точным и сохранять все формулы."
         )
 
-        chat = self.client.create_chat(temperature=0.2)
+        # Извлекаем настройки из состояния (для RAG ответа)
+        app_settings = state.get("app_settings")
+        provider = None
+        model = None
+        if app_settings and "rag" in app_settings:
+            provider = app_settings["rag"].get("provider")
+            model = app_settings["rag"].get("model")
+
+        if provider:
+            temp_client = LLMClient(provider=provider)
+            chat = temp_client.create_chat(model=model, temperature=0.2)
+        else:
+            chat = self.client.create_chat(temperature=0.2)
+            
         res = chat.invoke([HumanMessage(content=prompt)])
         answer = res.content
         
@@ -983,12 +1023,13 @@ class AgentSystem:
         return app
 
     # ---------- Публичный вызов ----------
-    async def run(self, question: str, session_id: str = "default") -> str:
+    async def run(self, question: str, session_id: str = "default", settings: Optional[Any] = None) -> str:
         """
         Запускает обработку вопроса через AgentSession.
         Args:
             question: Вопрос пользователя.
             session_id: Идентификатор сессии.
+            settings: Настройки моделей.
         Returns:
             Финальный ответ строкой.
         """
@@ -1013,7 +1054,7 @@ class AgentSystem:
         # Ограничиваем параллелизм
         async with self._concurrency_sem:
             # Запускаем сессию
-            await session.start(question)
+            await session.start(question, settings=settings)
             
             # Ждем завершения
             if session.task:

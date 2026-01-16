@@ -38,9 +38,19 @@ agent = AgentSystem()
 ws_connections: Dict[str, List[WebSocket]] = {}
 
 # Модель для запроса
+class LLMSettings(BaseModel):
+    provider: str
+    model: str
+
+class AppSettings(BaseModel):
+    agent: LLMSettings
+    rag: LLMSettings
+    quiz: LLMSettings
+
 class AgentRequest(BaseModel):
     question: str
     session_id: Optional[str] = "default"
+    settings: Optional[AppSettings] = None
 
 # Модель для запросов без вопроса (очистка, завершение, отмена)
 class SessionRequest(BaseModel):
@@ -70,7 +80,7 @@ async def run_agent(request: AgentRequest):
     Запускает агента для обработки вопроса.
     """
     try:
-        answer = await agent.run(request.question, request.session_id)
+        answer = await agent.run(request.question, request.session_id, settings=request.settings)
         return AgentResponse(
             answer=answer,
             session_id=request.session_id,

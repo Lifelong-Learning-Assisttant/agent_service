@@ -66,13 +66,14 @@ class AgentSession:
         
         self.log.info(f"AgentSession created: {session_id}")
     
-    async def start(self, question: str, mode: str = "qa") -> None:
+    async def start(self, question: str, mode: str = "qa", settings: Optional[Any] = None) -> None:
         """
         Запускает обработку вопроса в фоновой задаче.
         
         Args:
             question: Вопрос пользователя
             mode: Режим работы ('qa' или 'quiz')
+            settings: Настройки моделей
         """
         async with self.lock:
             if self.is_running():
@@ -82,6 +83,9 @@ class AgentSession:
             # Обновляем состояние
             self.state["question"] = question
             self.state["mode"] = mode
+            if settings:
+                self.state["app_settings"] = settings
+            
             self.touch()
             self.cancelled = False
             
