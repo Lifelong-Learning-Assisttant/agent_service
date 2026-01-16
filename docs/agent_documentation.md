@@ -46,30 +46,53 @@ graph TD
 
 **Источник:** `agent_service/agent_system.py`
 
-### Граф состояний
+### Граф состояний (NetRunner Protocol v3.1)
+
+В версии 3.1 внедрен узел **Prepare Material** для унифицированной подготовки контекста из разных источников (RAG, Web, Docs) и упрощена логика переходов.
 
 ```mermaid
 graph TD
-    A[Start] --> B[Planner]
-    B -->|general| C[Direct Answer]
-    B -->|rag_answer| D[Retrieve]
-    B -->|generate_quiz| D[Retrieve]
-    B -->|evaluate_quiz| E[Evaluate Quiz]
-    D -->|rag_answer| F[RAG Answer]
-    D -->|generate_quiz| G[Create Quiz]
-    C --> H[End]
-    F --> H[End]
-    G --> H[End]
-    E --> H[End]
+    Start((Start)) --> Planner{Planner}
+    
+    %% Ветвление на основе интента
+    Planner -->|general| Direct[Direct Answer]
+    Planner -->|rag_answer| Retrieve[Retrieve Docs]
+    Planner -->|generate_quiz| Retrieve
+    
+    %% Если квиз активен, Planner сразу направляет на обработку ответа
+    Planner -->|quiz_answering| Process[Process Answer]
+    Planner -->|evaluate_quiz| Eval[Evaluate Quiz]
+
+    %% Поток подготовки данных
+    Retrieve --> Prepare[Prepare Material]
+    
+    %% Использование подготовленных данных
+    Prepare -->|rag_answer| RAG_Ans[RAG Answer]
+    Prepare -->|generate_quiz| CreateQ[Create Quiz]
+
+    %% Цикл квиза
+    CreateQ --> End((End))
+    Process -->|next_question| End
+    Process -->|quiz_complete| Eval
+    
+    %% Завершение
+    Direct --> End
+    RAG_Ans --> End
+    Eval --> End
 ```
 
 **Узлы:**
-- **Planner**: Определяет намерение пользователя
-- **Retrieve**: Выполняет поиск через RAG
-- **Direct Answer**: Отвечает на общие вопросы
-- **RAG Answer**: Генерирует ответ по документам
-- **Create Quiz**: Создает квиз
-- **Evaluate Quiz**: Оценивает ответы
+- **Planner**: Центральный маршрутизатор. Если активен квиз, автоматически направляет ввод пользователя в `Process Answer`, если это не спец. команда.
+- **Retrieve**: Выполняет поиск документов в базе знаний (RAG). Возвращает сырые чанки с метаданными.
+- **Prepare Material**: Унифицированный узел обработки. Объединяет разрозненные чанки в связный Markdown ("Golden Source"), исправляет формулы LaTeX и фильтрует нерелевантное.
+- **RAG Answer**: Генерирует ответ пользователю, используя подготовленный Markdown как контекст.
+- **Create Quiz**: Генерирует вопросы для теста на основе подготовленного Markdown.
+- **Process Answer**: Записывает ответ пользователя, выдает следующий вопрос или инициирует оценку.
+- **Evaluate Quiz**: Проводит финальную оценку знаний и дает развернутый фидбек.
+
+### CLI Команды
+- `/finish_quizz` — Немедленное завершение теста и получение оценки.
+- `/skip_question` — Пропуск текущего вопроса.
 
 ### Определение намерений (Intent Determination)
 
@@ -84,10 +107,11 @@ graph TD
 
 **Возможные намерения:**
 - `general`: Общие вопросы и болталка.
-- `rag_answer`: Вопросы по материалам учебника (требуют поиска в RAG).
+- `rag_answer`: Вопросы по материалам учебника (требуют поиска в RAG). В режиме квиза — уточняющий вопрос.
 - `generate_quiz`: Запрос на создание нового теста.
-- `evaluate_quiz`: Запрос на оценку результатов пройденного теста.
-- `quiz_answering`: Ответ на конкретный вопрос в процессе квиза (определяется автоматически по состоянию сессии).
+- `evaluate_quiz`: Запрос на оценку результатов или завершение теста.
+- `skip_question`: Пропуск текущего вопроса квиза.
+- `quiz_answering`: Ответ на конкретный вопрос в процессе квиза.
 
 ## Async инструменты
 
