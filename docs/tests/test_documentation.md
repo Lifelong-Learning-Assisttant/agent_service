@@ -105,7 +105,8 @@ graph TD
 
 См. дополнительные файлы:
 - `agent_service/tests/addititional/` — интеграция с внешними сервисами
-- `agent_service/tests/components/` — компонентные тесты
+- `agent_service/tests/components/` — компонентные тесты, включая:
+    - `test_intent_real_llm.py` — тесты классификации намерений на реальной LLM.
 
 ## Запуск тестов
 
@@ -164,6 +165,12 @@ docker-compose -f docker-compose-dev.yml up -d
 
 # Запуск тестов
 docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/addititional/ -v
+```
+
+### Тестирование на реальной LLM
+Для проверки классификации намерений на реальной модели (требуется настроенный `APP_SETTINGS_PATH`):
+```bash
+docker exec lifelong_learning-agent-agent_dev-1 env APP_SETTINGS_PATH=app_settings-dev.json uv run pytest tests/components/test_intent_real_llm.py -s
 ```
 
 ## Производительность тестов
