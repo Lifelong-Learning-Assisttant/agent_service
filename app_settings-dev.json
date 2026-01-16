@@ -18,5 +18,5 @@
   "web_ui_url": "http://web-backend:8151",
   "web_ui_backend_url": "http://web-backend:8151",
   "session_ttl_seconds": 600,
-  "concurrency_limit": 2
+  "concurrency_limit": 5
 }
