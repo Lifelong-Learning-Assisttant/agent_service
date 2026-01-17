@@ -35,6 +35,11 @@ class AgentState(TypedDict, total=False):
     
     final_answer: str
     thought: str                          # Рассуждения модели (reasoning)
+    
+    # Режимы и настройки
+    interaction_mode: str                 # AI_SYNC | ANSWER_QUIZ
+    mode: str                             # qa | quiz
+    app_settings: Any
 
 
 # ---------- Агентная система ----------
@@ -224,11 +229,14 @@ class AgentSystem:
                     # Но если интент-анализ сомневается, в режиме квиза приоритет у quiz_answering.
                     intent = self._determine_intent(q, mode="quiz_active")
                     
-                    # Если LLM в режиме активного квиза вернула 'general', скорее всего это просто короткий ответ,
-                    # который она не смогла классифицировать. Принудительно ставим quiz_answering.
-                    if intent == "general" and len(q.split()) < 10:
+                    # Если LLM в режиме активного квиза вернула 'general' или 'rag_answer' для короткого сообщения,
+                    # скорее всего это просто короткий ответ, который она не смогла классифицировать.
+                    # Принудительно ставим quiz_answering, если это не явный вопрос (нет знака вопроса или спец. слов).
+                    is_short = len(q.split()) < 15
+                    has_question_mark = "?" in q
+                    if (intent in ["general", "rag_answer"]) and is_short and not has_question_mark:
                         intent = "quiz_answering"
-                        self.log.info("Planner (QuizMode): forced quiz_answering for short message in active quiz")
+                        self.log.info("Planner (QuizMode): forced quiz_answering for short message in active quiz (intent was %s)", state.get("intent"))
                     
                     self.log.info("Planner (QuizMode): determined intent=%s", intent)
             else:
@@ -951,7 +959,7 @@ class AgentSystem:
         )
         
         # Формируем финальный промпт
-        final_prompt = prompt_template.format(base_prompt=base_prompt.format(question=question))
+        final_prompt = prompt_template.format(base_prompt=base_prompt.format(question=question) + mode_context)
         
         # Получаем чат-модель
         chat = self.client.create_chat(temperature=0.1)
