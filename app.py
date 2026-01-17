@@ -330,6 +330,14 @@ async def get_agent_status():
     """
     return {"status": "ready"}
 
+# Эндпоинт для health check
+@app.get("/health")
+async def health_check():
+    """
+    Возвращает статус здоровья сервиса.
+    """
+    return {"status": "healthy", "service": "agent-service"}
+
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
