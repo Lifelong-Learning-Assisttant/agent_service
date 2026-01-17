@@ -214,10 +214,23 @@ class AgentSystem:
             quiz_active = quiz_questions and len(quiz_questions) > 0 and current_idx < len(quiz_questions)
 
             if quiz_active:
-                # В режиме квиза любой ввод — это либо ответ, либо уточнение (RAG)
-                # Мы используем легкий интент-анализ, чтобы понять, хочет ли пользователь уточнить теорию
-                intent = self._determine_intent(q, mode="quiz_active")
-                self.log.info("Planner (QuizMode): determined intent=%s", intent)
+                # Если пользователь явно отправил ответ через режим ANSWER_QUIZ
+                # Или если мы находимся в режиме квиза и сообщение не похоже на команду/вопрос
+                if state.get("interaction_mode") == "ANSWER_QUIZ":
+                    intent = "quiz_answering"
+                    self.log.info("Planner (QuizMode): explicit ANSWER_QUIZ detected")
+                else:
+                    # В режиме квиза (даже если AI_SYNC), мы сначала проверяем, не является ли это RAG вопросом.
+                    # Но если интент-анализ сомневается, в режиме квиза приоритет у quiz_answering.
+                    intent = self._determine_intent(q, mode="quiz_active")
+                    
+                    # Если LLM в режиме активного квиза вернула 'general', скорее всего это просто короткий ответ,
+                    # который она не смогла классифицировать. Принудительно ставим quiz_answering.
+                    if intent == "general" and len(q.split()) < 10:
+                        intent = "quiz_answering"
+                        self.log.info("Planner (QuizMode): forced quiz_answering for short message in active quiz")
+                    
+                    self.log.info("Planner (QuizMode): determined intent=%s", intent)
             else:
                 # Обычный режим
                 if session:
@@ -626,7 +639,7 @@ class AgentSystem:
             "quiz_questions": questions,
             "current_quiz_index": 0,
             "user_answers": [],
-            "final_answer": f"Начинаем квиз! Вопрос №1:\n{first_q}"
+            "final_answer": f"[SYSTEM: QUIZ_STARTED] {first_q}" # Уникальный маркер для фильтрации
         }
 
     async def evaluate_quiz_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
@@ -776,7 +789,7 @@ class AgentSystem:
                 **state,
                 "current_quiz_index": next_idx,
                 "user_answers": answers,
-                "final_answer": f"Принято. Вопрос №{next_idx + 1}:\n{next_q}"
+                "final_answer": f"[SYSTEM: NEXT_QUESTION] {next_q}" # Уникальный маркер для фильтрации
             }
         else:
             # Если вопросы закончились — меняем намерение на оценку
@@ -1032,13 +1045,14 @@ class AgentSystem:
         return app
 
     # ---------- Публичный вызов ----------
-    async def run(self, question: str, session_id: str = "default", settings: Optional[Any] = None) -> str:
+    async def run(self, question: str, session_id: str = "default", settings: Optional[Any] = None, interaction_mode: Optional[str] = None) -> str:
         """
         Запускает обработку вопроса через AgentSession.
         Args:
             question: Вопрос пользователя.
             session_id: Идентификатор сессии.
             settings: Настройки моделей.
+            interaction_mode: Режим взаимодействия.
         Returns:
             Финальный ответ строкой.
         """
@@ -1047,7 +1061,7 @@ class AgentSystem:
         # Запускаем sweeper при первом вызове
         self._ensure_sweeper_started()
 
-        self.log.info("run: start | session_id=%s | q_len=%d", session_id, len(question or ""))
+        self.log.info("run: start | session_id=%s | mode=%s | q_len=%d", session_id, interaction_mode, len(question or ""))
         t0 = time.perf_counter()
         
         # Получаем или создаем сессию
@@ -1063,7 +1077,7 @@ class AgentSystem:
         # Ограничиваем параллелизм
         async with self._concurrency_sem:
             # Запускаем сессию
-            await session.start(question, settings=settings)
+            await session.start(question, settings=settings, interaction_mode=interaction_mode)
             
             # Ждем завершения
             if session.task:

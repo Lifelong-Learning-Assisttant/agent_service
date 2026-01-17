@@ -51,6 +51,7 @@ class AgentRequest(BaseModel):
     question: str
     session_id: Optional[str] = "default"
     settings: Optional[AppSettings] = None
+    interaction_mode: Optional[str] = None
 
 # Модель для запросов без вопроса (очистка, завершение, отмена)
 class SessionRequest(BaseModel):
@@ -80,7 +81,12 @@ async def run_agent(request: AgentRequest):
     Запускает агента для обработки вопроса.
     """
     try:
-        answer = await agent.run(request.question, request.session_id, settings=request.settings)
+        answer = await agent.run(
+            request.question,
+            request.session_id,
+            settings=request.settings,
+            interaction_mode=request.interaction_mode
+        )
         return AgentResponse(
             answer=answer,
             session_id=request.session_id,
@@ -116,9 +122,13 @@ async def get_messages(session_id: str = "default"):
             if event["step"] == "start_run":
                 # Вопрос пользователя
                 question = event["meta"].get("question", "")
+                interaction_mode = event["meta"].get("interaction_mode")
                 if question:
-                    messages.append({"role": "user", "content": question})
-                    logger.info(f"DEBUG: Added user: {question[:50]}...")
+                    msg = {"role": "user", "content": question}
+                    if interaction_mode:
+                        msg["meta"] = {"interaction_mode": interaction_mode}
+                    messages.append(msg)
+                    logger.info(f"DEBUG: Added user (mode={interaction_mode}): {question[:50]}...")
             elif event["step"] in ["final_answer", "quizz_question"]:
                 # Финальный ответ агента или вопрос квиза (приоритет выше системных)
                 final_answer = event["meta"].get("final_answer", "")

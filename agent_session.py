@@ -66,7 +66,7 @@ class AgentSession:
         
         self.log.info(f"AgentSession created: {session_id}")
     
-    async def start(self, question: str, mode: str = "qa", settings: Optional[Any] = None) -> None:
+    async def start(self, question: str, mode: str = "qa", settings: Optional[Any] = None, interaction_mode: Optional[str] = None) -> None:
         """
         Запускает обработку вопроса в фоновой задаче.
         
@@ -74,6 +74,7 @@ class AgentSession:
             question: Вопрос пользователя
             mode: Режим работы ('qa' или 'quiz')
             settings: Настройки моделей
+            interaction_mode: Режим взаимодействия ('AI_SYNC' или 'ANSWER_QUIZ')
         """
         async with self.lock:
             if self.is_running():
@@ -83,6 +84,7 @@ class AgentSession:
             # Обновляем состояние
             self.state["question"] = question
             self.state["mode"] = mode
+            self.state["interaction_mode"] = interaction_mode
             if settings:
                 self.state["app_settings"] = settings
             
@@ -110,7 +112,10 @@ class AgentSession:
                 message="Начало обработки запроса",
                 tool="agent",
                 level="info",
-                meta={"question": question}
+                meta={
+                    "question": question,
+                    "interaction_mode": self.state.get("interaction_mode")
+                }
             )
             
             # Получаем родительский AgentSystem
