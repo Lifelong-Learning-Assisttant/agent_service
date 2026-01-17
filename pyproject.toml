@@ -17,6 +17,7 @@ dependencies = [
     "httpx",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "aiofiles",
 ]
 
 [tool.pytest.ini_options]

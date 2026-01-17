@@ -8,7 +8,9 @@ from typing import Dict, Any, List
 import logging
 import httpx
 import json
-from langchain.tools import Tool
+import os
+import aiofiles
+from langchain.tools import Tool, tool
 from settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -169,6 +171,48 @@ async def grade_exam_async(exam_id: str, answers: List[Dict[str, Any]]) -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
+@tool
+async def get_algo_problem_info(problem_id: str) -> str:
+    """
+    Возвращает мета-информацию об алгоритмической задаче, включая описание (для пользователя)
+    и скрытые заметки для интервьюера (только для агента).
+    Используй это, чтобы давать советы студенту.
+    """
+    # Внутри контейнера путь может отличаться, используем путь относительно /app
+    base_path = f"/app/../data/algo_problems/{problem_id}"
+    try:
+        info = {"problem_id": problem_id}
+        
+        task_path = os.path.join(base_path, "task.md")
+        if os.path.exists(task_path):
+            async with aiofiles.open(task_path, mode='r', encoding='utf-8') as f:
+                info["task_description"] = await f.read()
+        
+        note_path = os.path.join(base_path, "interviewer_note.md")
+        if os.path.exists(note_path):
+            async with aiofiles.open(note_path, mode='r', encoding='utf-8') as f:
+                info["interviewer_notes"] = await f.read()
+                
+        return json.dumps(info, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@tool
+async def get_algo_solution(problem_id: str) -> str:
+    """
+    Возвращает эталонное решение задачи. НЕ ПОКАЗЫВАЙ ЕГО ПОЛЬЗОВАТЕЛЮ напрямую.
+    Используй его только для анализа кода пользователя и подсказок.
+    """
+    path = f"/app/../data/algo_problems/{problem_id}/hidden_solution.py"
+    try:
+        if os.path.exists(path):
+            async with aiofiles.open(path, mode='r', encoding='utf-8') as f:
+                content = await f.read()
+                return json.dumps({"solution": content}, ensure_ascii=False)
+        return json.dumps({"error": "Solution not found"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 def make_async_tools() -> List[Tool]:
     """
     Создает список асинхронных инструментов LangChain для использования в агентах.
@@ -194,6 +238,16 @@ def make_async_tools() -> List[Tool]:
             name="grade_exam",
             func=grade_exam_async,
             description="Асинхронная оценка ответов на экзамен. Вход: exam_id, answers. Возвращает результаты оценки в JSON."
+        ),
+        Tool(
+            name="get_algo_problem_info",
+            func=get_algo_problem_info,
+            description="Получить информацию о задаче и заметки интервьюера. Вход: problem_id."
+        ),
+        Tool(
+            name="get_algo_solution",
+            func=get_algo_solution,
+            description="Получить эталонное решение задачи (скрыто от пользователя). Вход: problem_id."
         ),
     ]
     return tools

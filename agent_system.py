@@ -1,6 +1,7 @@
 from typing import Dict, Optional, TypedDict, Literal, List, Set, Any
 import os
 import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 from collections import deque
@@ -14,7 +15,7 @@ from langchain_core.prompts import PromptTemplate
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import make_async_tools, rag_search_async, rag_generate_async, generate_exam_async, grade_exam_async
+from langchain_tools import make_async_tools, rag_search_async, rag_generate_async, generate_exam_async, grade_exam_async, get_algo_problem_info, get_algo_solution
 from agent_session import AgentSession
 
 
@@ -23,7 +24,9 @@ class AgentState(TypedDict, total=False):
     """Общее состояние исполнения графа."""
 
     question: str
-    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering", "skip_question"]
+    intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering", "skip_question", "algo_help"]
+    problem_id: str                 # ID текущей задачи (например, valid_parentheses)
+    user_code: str                  # Текущий код пользователя
     documents: List[Dict[str, Any]] # Список унифицированных документов {content, source, score}
     prepared_material: str          # Синтезированный "Golden Source" в Markdown
     is_relevant: bool               # Флаг достаточности информации
@@ -37,8 +40,8 @@ class AgentState(TypedDict, total=False):
     thought: str                          # Рассуждения модели (reasoning)
     
     # Режимы и настройки
-    interaction_mode: str                 # AI_SYNC | ANSWER_QUIZ
-    mode: str                             # qa | quiz
+    interaction_mode: str                 # AI_SYNC | ANSWER_QUIZ | ALGOS
+    mode: str                             # qa | quiz | algos
     app_settings: Any
 
 
@@ -248,8 +251,13 @@ class AgentSystem:
                         tool="planner",
                         level="info"
                     )
-                intent = self._determine_intent(q, mode="idle")
-                self.log.info("Planner (IdleMode): determined intent=%s", intent)
+                
+                mode = "idle"
+                if state.get("interaction_mode") == "ALGOS":
+                    mode = "algos"
+                
+                intent = self._determine_intent(q, mode=mode)
+                self.log.info(f"Planner ({mode} Mode): determined intent={intent}")
 
         # Уведомление об успехе
         if session:
@@ -818,6 +826,63 @@ class AgentSystem:
                 "intent": "evaluate_quiz"
             }
 
+    async def algo_interviewer_node(self, state: AgentState, session: Optional["AgentSession"] = None) -> AgentState:
+        """
+        Узел интервьюера для AlgoLab. Анализирует код пользователя и дает подсказки.
+        """
+        import time
+        from langchain_tools import get_algo_problem_info, get_algo_solution
+
+        self.log.info("start:algo_interviewer")
+        t0 = time.perf_counter()
+
+        if session:
+            await session.notify_ui(
+                step="start_algo_help",
+                message="Анализ вашего решения и подготовка подсказки...",
+                tool="algo_interviewer",
+                level="info"
+            )
+
+        problem_id = state.get("problem_id") or "valid_parentheses"
+        user_code = state.get("user_code", "")
+        question = state.get("question", "")
+
+        # 1. Получаем инфо о задаче и эталонное решение
+        problem_info_json = await get_algo_problem_info.ainvoke(problem_id)
+        solution_info_json = await get_algo_solution.ainvoke(problem_id)
+        
+        problem_info = json.loads(problem_info_json)
+        solution_info = json.loads(solution_info_json)
+
+        # 2. Формируем промпт для интервьюера
+        prompt = (
+            f"Ты — опытный интервьюер в BigTech. Ты помогаешь студенту решить задачу в AlgoLab.\n"
+            f"ЗАДАЧА: {problem_info.get('task_description', 'N/A')}\n"
+            f"ЗАМЕТКИ ИНТЕРВЬЮЕРА: {problem_info.get('interviewer_notes', 'N/A')}\n"
+            f"ЭТАЛОННОЕ РЕШЕНИЕ (ДЛЯ ТЕБЯ): {solution_info.get('solution', 'N/A')}\n\n"
+            f"ТЕКУЩИЙ КОД ПОЛЬЗОВАТЕЛЯ:\n```python\n{user_code}\n```\n\n"
+            f"ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}\n\n"
+            f"ИНСТРУКЦИЯ: Дай наводящую подсказку или объясни ошибку. "
+            f"НЕ ДАВАЙ ГОТОВЫЙ КОД. Будь кратким и поддерживающим. Используй KaTeX для формул."
+        )
+
+        chat = self.client.create_chat(temperature=0.4)
+        res = chat.invoke([HumanMessage(content=prompt)])
+        answer = res.content
+
+        if session:
+            await session.notify_ui(
+                step="algo_help_done",
+                message="Подсказка готова",
+                tool="algo_interviewer",
+                level="info"
+            )
+
+        dt = (time.perf_counter() - t0) * 1000
+        self.log.info("done:algo_interviewer | %.1f ms", dt)
+        return {**state, "final_answer": answer}
+
     async def _parse_quiz_result(self, raw_text: str) -> List[Dict[str, str]]:
         """
         Превращает ответ от test_generator API в список объектов {"q": "...", "a": "..."}.
@@ -918,6 +983,8 @@ class AgentSystem:
             return "process_answer"
         elif intent == "evaluate_quiz":
             return "evaluate_quiz"
+        elif intent == "algo_help":
+            return "algo_interviewer"
         else:
             return "retrieve"
 
@@ -936,7 +1003,7 @@ class AgentSystem:
         from typing import Literal
         
         class IntentModel(BaseModel):
-            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering", "skip_question"] = Field(
+            intent: Literal["general", "rag_answer", "generate_quiz", "evaluate_quiz", "quiz_answering", "skip_question", "algo_help"] = Field(
                 description="Намерение пользователя"
             )
 
@@ -948,6 +1015,8 @@ class AgentSystem:
         mode_context = f"\nТЕКУЩИЙ РЕЖИМ: {mode.upper()}\n"
         if mode == "quiz_active":
             mode_context += "ВНИМАНИЕ: Пользователь сейчас проходит тест. Любой обычный текст скорее всего является ответом на вопрос (quiz_answering)."
+        elif mode == "algos":
+            mode_context += "ВНИМАНИЕ: Пользователь сейчас решает алгоритмическую задачу в AlgoLab. Любой запрос о помощи или подсказке — это algo_help."
         
         parser = JsonOutputParser(pydantic_object=IntentModel)
         
@@ -1005,6 +1074,7 @@ class AgentSystem:
         builder.add_node("create_quiz", wrap_node(self.create_quiz_node))
         builder.add_node("process_answer", wrap_node(self.process_quiz_answer_node))
         builder.add_node("evaluate_quiz", wrap_node(self.evaluate_quiz_node))
+        builder.add_node("algo_interviewer", wrap_node(self.algo_interviewer_node))
 
         builder.add_edge(START, "planner")
         
@@ -1016,7 +1086,8 @@ class AgentSystem:
                 "direct_answer": "direct_answer",
                 "retrieve": "retrieve",
                 "process_answer": "process_answer",
-                "evaluate_quiz": "evaluate_quiz"
+                "evaluate_quiz": "evaluate_quiz",
+                "algo_interviewer": "algo_interviewer"
             }
         )
         
@@ -1047,6 +1118,7 @@ class AgentSystem:
         builder.add_edge("rag_answer", END)
         builder.add_edge("create_quiz", END)
         builder.add_edge("evaluate_quiz", END)
+        builder.add_edge("algo_interviewer", END)
 
         app = builder.compile(checkpointer=self.memory)
         self.log.debug("build_graph: done")
