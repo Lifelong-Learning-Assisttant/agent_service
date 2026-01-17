@@ -119,20 +119,21 @@ async def get_messages(session_id: str = "default"):
                 if question:
                     messages.append({"role": "user", "content": question})
                     logger.info(f"DEBUG: Added user: {question[:50]}...")
-            elif event["level"] in ["info", "error", "warn"] and event["step"] != "final_answer":
-                # Системное сообщение о прогрессе или ошибке
-                messages.append({"role": "system", "content": event["message"]})
-                logger.info(f"DEBUG: Added system ({event['level']}): {event['message'][:50]}...")
-            elif event["step"] == "final_answer":
-                # Финальный ответ агента
+            elif event["step"] in ["final_answer", "quizz_question"]:
+                # Финальный ответ агента или вопрос квиза (приоритет выше системных)
                 final_answer = event["meta"].get("final_answer", "")
                 thought = event["meta"].get("thought", "")
                 if final_answer:
-                    msg = {"role": "agent", "content": final_answer}
+                    role = "assistant" if event["step"] == "quizz_question" else "agent"
+                    msg = {"role": role, "content": final_answer, "type": event["step"], "meta": event["meta"]}
                     if thought:
                         msg["thought"] = thought
                     messages.append(msg)
-                    logger.info(f"DEBUG: Added agent with thought: {final_answer[:50]}...")
+                    logger.info(f"DEBUG: Added {role} with type {event['step']}: {final_answer[:50]}...")
+            elif event["level"] in ["info", "error", "warn"]:
+                # Системное сообщение о прогрессе или ошибке
+                messages.append({"role": "system", "content": event["message"]})
+                logger.info(f"DEBUG: Added system ({event['level']}): {event['message'][:50]}...")
         
         logger.info(f"DEBUG: Returning {len(messages)} messages")
         logger.info(f"DEBUG: Messages content: {messages}")

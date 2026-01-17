@@ -18,5 +18,10 @@
   "web_ui_url": "http://web-backend:8151",
   "web_ui_backend_url": "http://web-backend:8151",
   "session_ttl_seconds": 600,
-  "concurrency_limit": 5
+  "concurrency_limit": 5,
+  "quiz_total_questions": 10,
+  "quiz_single_choice_ratio": 0.4,
+  "quiz_multiple_choice_ratio": 0.3,
+  "quiz_open_ended_ratio": 0.3,
+  "quiz_language": "ru"
 }

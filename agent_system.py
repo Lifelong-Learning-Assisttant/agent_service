@@ -551,18 +551,18 @@ class AgentSystem:
             context = "# Общий квиз по ML\n\n## Основы\nМашинное обучение — это..."
 
         # Попытка 1: Используем специализированный сервис генерации
-        # Проверяем, просил ли пользователь только варианты ответов
-        q_lower = state.get("question", "").lower()
-        config = None
-        if "вариант" in q_lower or "choice" in q_lower:
-            config = {
-                "total_questions": 3,
-                "single_choice_ratio": 0.7,
-                "multiple_choice_ratio": 0.3,
-                "open_ended_ratio": 0.0,
-                "language": "ru"
-            }
-            self.log.info("Quiz config: forced choice questions only")
+        # Настраиваем конфигурацию из настроек приложения
+        config = {
+            "total_questions": getattr(self.cfg, "quiz_total_questions", 10),
+            "single_choice_ratio": getattr(self.cfg, "quiz_single_choice_ratio", 0.4),
+            "multiple_choice_ratio": getattr(self.cfg, "quiz_multiple_choice_ratio", 0.3),
+            "open_ended_ratio": getattr(self.cfg, "quiz_open_ended_ratio", 0.3),
+            "language": getattr(self.cfg, "quiz_language", "ru"),
+            "difficulty": "medium"
+        }
+        self.log.info("Quiz config: %d questions, %s, ratio %s/%s/%s",
+                      config["total_questions"], config["language"],
+                      config["single_choice_ratio"], config["multiple_choice_ratio"], config["open_ended_ratio"])
 
         raw_quiz = await generate_exam_async(context, config=config)
         
@@ -607,11 +607,15 @@ class AgentSystem:
         # Уведомление об успехе
         if session:
             await session.notify_ui(
-                step="generate_done",
-                message="Квиз сгенерирован",
+                step="quizz_question",
+                message=f"Начинаем квиз! Вопрос №1:\n{first_q}",
                 tool="generate_exam",
                 level="info",
-                meta={"length": len(questions)}
+                meta={
+                    "final_answer": f"Начинаем квиз! Вопрос №1:\n{first_q}",
+                    "current_quiz_index": 0,
+                    "total_questions": len(questions)
+                }
             )
 
         dt = (time.perf_counter() - t0) * 1000
@@ -754,10 +758,15 @@ class AgentSystem:
             # Уведомление
             if session:
                 await session.notify_ui(
-                    step="next_question",
-                    message=f"Принято. Вопрос №{next_idx + 1}",
+                    step="quizz_question",
+                    message=f"Принято. Вопрос №{next_idx + 1}:\n{next_q}",
                     tool="process_answer",
-                    level="info"
+                    level="info",
+                    meta={
+                        "final_answer": f"Принято. Вопрос №{next_idx + 1}:\n{next_q}",
+                        "current_quiz_index": next_idx,
+                        "total_questions": len(questions)
+                    }
                 )
             
             dt = (time.perf_counter() - t0) * 1000
