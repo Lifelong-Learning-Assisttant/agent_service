@@ -49,19 +49,49 @@ graph TD
     C_Start(Start) --> C_Router{Router}
     
     C_Router --"General Question"--> C_Direct[Direct Answer Node]
-    C_Router --"Technical Question"--> C_RAG[RAG Retrieval Node]
+    C_Router --"Technical Question"--> C_Search[Shared Retrieval]
     
-    C_RAG --> C_Prepare[Prepare Material Node]
+    C_Search --> C_Prepare[Prepare Material Node]
     C_Prepare --> C_Generate[RAG Answer Node]
     
     C_Direct --> C_End(End / Handoff)
     C_Generate --> C_End
     
     subgraph "Chat Tools"
-        C_RAG --"Call"--> Tool_RAG[RAG API]
-        C_Prepare --"Call"--> Tool_Web[Tavily API]
+        C_Search --"Call"--> Shared_Tools[RAG/Web/Docs Tools]
     end
 ```
+
+### 2.5 Shared Retrieval Subgraph (Поиск информации)
+
+Унифицированный подграф для сбора знаний из множества источников.
+
+```mermaid
+graph TD
+    S_Start(Start) --> S_Router{Retrieval Router}
+    
+    S_Router --"Fundamental ML/DL"--> S_RAG[Yandex RAG]
+    S_Router --"Fresh News/Trends"--> S_Web[Tavily Search]
+    S_Router --"Library Docs/API"--> S_Docs[Context7 Docs]
+    
+    S_RAG --> S_Aggregator[Context Aggregator]
+    S_Web --> S_Aggregator
+    S_Docs --> S_Aggregator
+    
+    S_Aggregator --> S_Prepare[Prepare Material Node]
+    S_Prepare --> S_End(Return Unified Markdown)
+    
+    subgraph "Retrieval Capabilities"
+        S_RAG --"Vector DB"--> Qdrant
+        S_Web --"Internet"--> Tavily
+        S_Docs --"Package Index"--> Context7
+    end
+```
+
+**Логика работы:**
+1.  **Router**: LLM анализирует запрос и решает, какие инструменты поиска активировать (можно несколько одновременно).
+2.  **Aggregator**: Собирает сырые фрагменты (chunks) из всех выбранных источников.
+3.  **Prepare Material**: Узел-"редактор", который синтезирует связный учебный текст, исправляет формулы LaTeX и удаляет дубликаты.
 
 ### 2.3 Quiz Subgraph (Тестирование)
 
@@ -73,9 +103,11 @@ graph TD
     
     Q_Router --"Intent: Answer / Next"--> Q_Examiner[Examiner Role]
     Q_Router --"Intent: Help / Explain"--> Q_Mentor[Mentor Role]
+    Q_Router --"Intent: Skip"--> Q_Skip[Skip Node]
     Q_Router --"Intent: Search"--> Q_Search[Shared Retrieval]
     
     Q_Examiner --"Correct?"--> Q_Check{Check Progress}
+    Q_Skip --"Next"--> Q_Check
     Q_Check --"More Questions"--> Q_End(End Step)
     Q_Check --"Finished"--> Q_Eval[Evaluation Node]
     
