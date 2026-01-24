@@ -102,37 +102,39 @@ graph TD
 
 ### 2.3 Quiz Subgraph (Тестирование)
 
-Режим проведения квизов с разделением ролей экзаменатора и ментора.
+Режим проведения квизов с разделением ролей интервьюера (процесс) и ментора (результат).
 
 ```mermaid
 graph TD
     Q_Start(Start) --> Q_Router{Internal Router}
     
-    Q_Router --"Intent: Answer / Next"--> Q_Examiner[Examiner Role]
-    Q_Router --"Intent: Help / Explain"--> Q_Mentor[Mentor Role]
+    Q_Router --"Intent: Answer / Next"--> Q_Interviewer[Interviewer Role]
+    Q_Router --"Intent: Help / Explain"--> Q_Interviewer
     Q_Router --"Intent: Skip"--> Q_Skip[Skip Node]
     Q_Router --"Intent: Search"--> Q_Search[[Shared Retrieval Subgraph]]
     
-    Q_Examiner --"Correct?"--> Q_Check{Check Progress}
-    Q_Skip --"Next"--> Q_Check
-    Q_Check --"More Questions"--> Q_End(End Step)
-    Q_Check --"Finished"--> Q_Eval[Evaluation Node]
+    Q_Interviewer --"Process Answer"--> Q_Check{Check Progress}
+    Q_Interviewer --"Small Hint"--> Q_End(End Step)
     
-    Q_Mentor --"Explanation"--> Q_End
-    Q_Search --"Context"--> Q_Mentor
-    Q_Eval --> Q_End
+    Q_Skip --"Mark as Skipped"--> Q_Check
+    
+    Q_Check --"More Questions"--> Q_End
+    Q_Check --"Finished / Stop"--> Q_Mentor[Mentor Role]
+    
+    Q_Search --"Context"--> Q_Interviewer
+    Q_Mentor --"Detailed Feedback"--> Q_End
     
     subgraph "Quiz Tools"
-        Q_Examiner --"Call"--> Tool_Grade[Grade Exam]
-        Q_Eval --"Call"--> Tool_Gen[Generate Feedback]
+        Q_Interviewer --"Call"--> Tool_Grade[Grade Exam]
+        Q_Mentor --"Call"--> Tool_Gen[Generate Feedback]
     end
 ```
 
 **Логика работы:**
-1.  **Internal Router**: Анализирует ввод. Если это ответ на вопрос — в `Examiner`, если просьба помочь — в `Mentor`, если отвлеченный вопрос — в `Shared Retrieval`.
-2.  **Examiner**: Проверяет ответ и обновляет прогресс.
-3.  **Mentor**: Дает подсказки (Scaffolding), используя контекст из `Shared Retrieval`, но не раскрывая ответ.
-4.  **Skip**: Позволяет пропустить сложный вопрос с сохранением состояния.
+1.  **Internal Router**: Направляет поток в зависимости от действий пользователя.
+2.  **Interviewer**: Ведет процесс квиза. Принимает ответы, дает небольшие уточнения (используя `Shared Retrieval`), но не раскрывает правильный ответ до завершения.
+3.  **Skip**: Фиксирует пропуск вопроса без ответа и инициирует переход к следующему.
+4.  **Mentor**: Активируется только после завершения квиза (или по требованию "Стоп"). Проводит глубокий разбор всех ответов, дает развернутую обратную связь и правильные решения.
 
 ### 2.4 Algo Subgraph (Алгоритмы)
 
