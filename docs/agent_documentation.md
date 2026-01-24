@@ -40,6 +40,12 @@ graph TD
     ChatGraph --"Command: PARENT"--> Supervisor
 ```
 
+**Логика работы:**
+1.  **Intent Determination**: Анализирует входящее сообщение и решает, какой режим активировать (Quiz, Algo, Chat) или запустить поиск.
+2.  **State Mapping**: Подготавливает данные для подграфа (фильтрует историю, добавляет профиль пользователя).
+3.  **Orchestration**: Передает управление подграфу и ожидает возврата через `Command`.
+4.  **Profile Update**: На основе результатов работы подграфа обновляет долгосрочную карту компетентностей пользователя.
+
 ### 2.2 Chat Subgraph (Свободный диалог)
 
 Режим для общего общения и поиска информации.
@@ -49,18 +55,19 @@ graph TD
     C_Start(Start) --> C_Router{Router}
     
     C_Router --"General Question"--> C_Direct[Direct Answer Node]
-    C_Router --"Technical Question"--> C_Search[Shared Retrieval]
+    C_Router --"Technical Question"--> C_Search[[Shared Retrieval Subgraph]]
     
-    C_Search --> C_Prepare[Prepare Material Node]
-    C_Prepare --> C_Generate[RAG Answer Node]
+    C_Search --> C_Generate[Full Answer Node]
     
     C_Direct --> C_End(End / Handoff)
     C_Generate --> C_End
-    
-    subgraph "Chat Tools"
-        C_Search --"Call"--> Shared_Tools[RAG/Web/Docs Tools]
-    end
 ```
+
+**Логика работы:**
+1.  **Router**: Классифицирует запрос. Если это "болтовня" — направляет в `Direct Answer`. Если вопрос технический — в `Shared Retrieval`.
+2.  **Shared Retrieval**: Вызывает унифицированный подграф поиска для сбора знаний из RAG, Tavily или Context7.
+3.  **Direct Answer**: Генерирует быстрый ответ, используя Persona-промпт и внутренние знания модели.
+4.  **Full Answer**: Формирует подробный, структурированный ответ на основе материалов, подготовленных подграфом поиска.
 
 ### 2.5 Shared Retrieval Subgraph (Поиск информации)
 
@@ -104,7 +111,7 @@ graph TD
     Q_Router --"Intent: Answer / Next"--> Q_Examiner[Examiner Role]
     Q_Router --"Intent: Help / Explain"--> Q_Mentor[Mentor Role]
     Q_Router --"Intent: Skip"--> Q_Skip[Skip Node]
-    Q_Router --"Intent: Search"--> Q_Search[Shared Retrieval]
+    Q_Router --"Intent: Search"--> Q_Search[[Shared Retrieval Subgraph]]
     
     Q_Examiner --"Correct?"--> Q_Check{Check Progress}
     Q_Skip --"Next"--> Q_Check
@@ -118,9 +125,14 @@ graph TD
     subgraph "Quiz Tools"
         Q_Examiner --"Call"--> Tool_Grade[Grade Exam]
         Q_Eval --"Call"--> Tool_Gen[Generate Feedback]
-        Q_Search --"Call"--> Shared_Tools[RAG/Web/Docs Tools]
     end
 ```
+
+**Логика работы:**
+1.  **Internal Router**: Анализирует ввод. Если это ответ на вопрос — в `Examiner`, если просьба помочь — в `Mentor`, если отвлеченный вопрос — в `Shared Retrieval`.
+2.  **Examiner**: Проверяет ответ и обновляет прогресс.
+3.  **Mentor**: Дает подсказки (Scaffolding), используя контекст из `Shared Retrieval`, но не раскрывая ответ.
+4.  **Skip**: Позволяет пропустить сложный вопрос с сохранением состояния.
 
 ### 2.4 Algo Subgraph (Алгоритмы)
 
@@ -132,7 +144,7 @@ graph TD
     
     A_Router --"Intent: Code Submission"--> A_Interviewer[Interviewer Role]
     A_Router --"Intent: Hint / Help"--> A_Mentor[Mentor Role]
-    A_Router --"Intent: Search"--> A_Search[Shared Retrieval]
+    A_Router --"Intent: Search"--> A_Search[[Shared Retrieval Subgraph]]
     
     A_Interviewer --"Run Tests"--> A_Sandbox[Sandbox Node]
     A_Sandbox --"Result"--> A_End(End Step)
@@ -143,9 +155,13 @@ graph TD
     subgraph "Algo Tools"
         A_Interviewer --"Call"--> Tool_Problem[Get Problem Info]
         A_Sandbox --"Call"--> Tool_Exec[Code Sandbox]
-        A_Search --"Call"--> Shared_Tools[RAG/Web/Docs Tools]
     end
 ```
+
+**Логика работы:**
+1.  **Internal Router**: Разделяет попытки сдачи кода и запросы на помощь.
+2.  **Interviewer**: Запускает код в безопасной песочнице и возвращает результаты тестов.
+3.  **Mentor**: Объясняет ошибки и дает наводки на решение, используя `Shared Retrieval`.
 
 ## 3. Управление состоянием (Scoped State)
 
