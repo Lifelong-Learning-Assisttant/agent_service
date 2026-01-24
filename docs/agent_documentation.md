@@ -27,10 +27,13 @@ graph TD
     Supervisor --"Intent: Quiz"--> QuizHandoff[Prepare Quiz Data]
     Supervisor --"Intent: Algo"--> AlgoHandoff[Prepare Algo Data]
     Supervisor --"Intent: Chat"--> ChatHandoff[Prepare Chat Data]
+    Supervisor --"Intent: Search"--> GlobalSearch[Shared Retrieval Node]
     
     QuizHandoff --> QuizGraph[[Quiz Subgraph]]
     AlgoHandoff --> AlgoGraph[[Algo Subgraph]]
     ChatHandoff --> ChatGraph[[Chat Subgraph]]
+    
+    GlobalSearch --"RAG/Web/Docs"--> Supervisor
     
     QuizGraph --"Command: PARENT"--> Supervisor
     AlgoGraph --"Command: PARENT"--> Supervisor
@@ -70,18 +73,20 @@ graph TD
     
     Q_Router --"Intent: Answer / Next"--> Q_Examiner[Examiner Role]
     Q_Router --"Intent: Help / Explain"--> Q_Mentor[Mentor Role]
+    Q_Router --"Intent: Search"--> Q_Search[Shared Retrieval]
     
     Q_Examiner --"Correct?"--> Q_Check{Check Progress}
     Q_Check --"More Questions"--> Q_End(End Step)
     Q_Check --"Finished"--> Q_Eval[Evaluation Node]
     
     Q_Mentor --"Explanation"--> Q_End
+    Q_Search --"Context"--> Q_Mentor
     Q_Eval --> Q_End
     
     subgraph "Quiz Tools"
         Q_Examiner --"Call"--> Tool_Grade[Grade Exam]
         Q_Eval --"Call"--> Tool_Gen[Generate Feedback]
-        Q_Mentor --"Call"--> Tool_Docs[Context7 / RAG]
+        Q_Search --"Call"--> Shared_Tools[RAG/Web/Docs Tools]
     end
 ```
 
@@ -95,16 +100,18 @@ graph TD
     
     A_Router --"Intent: Code Submission"--> A_Interviewer[Interviewer Role]
     A_Router --"Intent: Hint / Help"--> A_Mentor[Mentor Role]
+    A_Router --"Intent: Search"--> A_Search[Shared Retrieval]
     
     A_Interviewer --"Run Tests"--> A_Sandbox[Sandbox Node]
     A_Sandbox --"Result"--> A_End(End Step)
     
     A_Mentor --"Scaffolding Hint"--> A_End
+    A_Search --"Context"--> A_Mentor
     
     subgraph "Algo Tools"
         A_Interviewer --"Call"--> Tool_Problem[Get Problem Info]
         A_Sandbox --"Call"--> Tool_Exec[Code Sandbox]
-        A_Mentor --"Call"--> Tool_Docs[Context7 / RAG]
+        A_Search --"Call"--> Shared_Tools[RAG/Web/Docs Tools]
     end
 ```
 
