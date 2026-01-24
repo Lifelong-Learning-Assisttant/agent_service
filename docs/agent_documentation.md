@@ -122,7 +122,8 @@ graph TD
     Q_Check --"Finished / Stop"--> Q_Mentor[Mentor Role]
     
     Q_Search --"Context"--> Q_Interviewer
-    Q_Mentor --"Detailed Feedback"--> Q_End
+    Q_Mentor --"Feedback / Discussion"--> Q_Mentor
+    Q_Mentor --"Intent: Exit"--> Q_End
     
     subgraph "Quiz Tools"
         Q_Interviewer --"Call"--> Tool_Grade[Grade Exam]
@@ -134,7 +135,7 @@ graph TD
 1.  **Internal Router**: Направляет поток в зависимости от действий пользователя.
 2.  **Interviewer**: Ведет процесс квиза. Принимает ответы, дает небольшие уточнения (используя `Shared Retrieval`), но не раскрывает правильный ответ до завершения.
 3.  **Skip**: Фиксирует пропуск вопроса без ответа и инициирует переход к следующему.
-4.  **Mentor**: Активируется только после завершения квиза (или по требованию "Стоп"). Проводит глубокий разбор всех ответов, дает развернутую обратную связь и правильные решения.
+4.  **Mentor**: Активируется после завершения квиза (или по требованию "Стоп"). Проводит глубокий разбор всех ответов, дает развернутую обратную связь и правильные решения. Остается в активном состоянии для обсуждения результатов и ответов на уточняющие вопросы пользователя, пока тот не подтвердит окончательное завершение сессии квиза.
 
 ### 2.4 Algo Subgraph (Алгоритмы)
 
@@ -149,10 +150,13 @@ graph TD
     A_Router --"Intent: Search"--> A_Search[[Shared Retrieval Subgraph]]
     
     A_Interviewer --"Run Tests"--> A_Sandbox[Sandbox Node]
-    A_Sandbox --"Result"--> A_End(End Step)
+    A_Sandbox --"Result / Feedback"--> A_Interviewer
+    A_Interviewer --"Finished / Stop"--> A_Mentor[Mentor Role]
     
-    A_Mentor --"Scaffolding Hint"--> A_End
-    A_Search --"Context"--> A_Mentor
+    A_Mentor --"Detailed Review / Discussion"--> A_Mentor
+    A_Mentor --"Intent: Exit"--> A_End
+    
+    A_Search --"Context"--> A_Interviewer
     
     subgraph "Algo Tools"
         A_Interviewer --"Call"--> Tool_Problem[Get Problem Info]
@@ -161,9 +165,9 @@ graph TD
 ```
 
 **Логика работы:**
-1.  **Internal Router**: Разделяет попытки сдачи кода и запросы на помощь.
-2.  **Interviewer**: Запускает код в безопасной песочнице и возвращает результаты тестов.
-3.  **Mentor**: Объясняет ошибки и дает наводки на решение, используя `Shared Retrieval`.
+1.  **Internal Router**: Разделяет попытки сдачи кода, запросы на помощь и оценку сложности.
+2.  **Interviewer**: Ведет процесс интервью. Запускает код в безопасной песочнице, проверяет оценки сложности (время/память) и возвращает результаты тестов. Если оценки неверны — сообщает об этом, но не называет правильных. Дает небольшие наводки через `Shared Retrieval`.
+3.  **Mentor**: Активируется после завершения задачи (или по требованию "Стоп"). Проводит глубокий разбор решения, обсуждает альтернативные подходы и помогает пользователю вырасти как инженеру. Остается в активном состоянии для обсуждения, пока сессия не будет закрыта.
 
 ## 3. Управление состоянием (Scoped State)
 
