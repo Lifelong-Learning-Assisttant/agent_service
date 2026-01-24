@@ -4,131 +4,126 @@
 
 NetRunner — это продвинутый образовательный AI-агент, построенный на базе фреймворка **LangGraph** с использованием паттерна **"Router-driven Subgraphs"**. Эта архитектура обеспечивает модульность, изоляцию контекста и возможность динамического переключения ролей.
 
-## 2. Архитектура Supervisor + Subgraphs
+## 2. Архитектура системы
 
-Система состоит из главного графа-оркестратора (`Supervisor`) и специализированных подграфов (`Subgraphs`), каждый из которых инкапсулирует логику конкретного режима работы.
+Система реализована как иерархический граф, где главный оркестратор управляет специализированными подграфами.
 
-### 2.1 Диаграмма архитектуры
+### 2.1 Supervisor Graph (Оркестратор)
+
+Главный граф отвечает за маршрутизацию и управление глобальной памятью.
 
 ```mermaid
 graph TD
-    User([Пользователь]) --> Supervisor{Supervisor Graph}
+    User([Пользователь]) --> Supervisor{Supervisor Node}
     
-    subgraph "Global Memory (Postgres)"
-        UserProfile[(User Profile)]
-        ChatHistory[(Chat History)]
+    subgraph "Global Memory"
+        State[(GlobalState)]
+        Profile[(User Profile)]
     end
     
-    Supervisor <--> UserProfile
-    Supervisor <--> ChatHistory
+    Supervisor <--> State
+    Supervisor <--> Profile
     
-    Supervisor --"Route: Quiz"--> QuizGraph
-    Supervisor --"Route: Algo"--> AlgoGraph
-    Supervisor --"Route: Chat"--> ChatGraph
+    Supervisor --"Intent: Quiz"--> QuizHandoff[Prepare Quiz Data]
+    Supervisor --"Intent: Algo"--> AlgoHandoff[Prepare Algo Data]
+    Supervisor --"Intent: Chat"--> ChatHandoff[Prepare Chat Data]
     
-    subgraph QuizGraph [Quiz Subgraph]
-        Q_Init(Initialize) --> Q_Router{Internal Router}
-        Q_Router --"Intent: Answer"--> Q_Examiner[Examiner Role]
-        Q_Router --"Intent: Help"--> Q_Mentor[Mentor Role]
-        Q_Examiner --"Tools"--> Tool_Quiz[Generate/Grade Tools]
-        Q_Mentor --"Tools"--> Tool_RAG_Q[RAG/Docs Tools]
-        Q_Examiner --> Q_Handoff[Handoff to Supervisor]
-        Q_Mentor --> Q_Examiner
-    end
+    QuizHandoff --> QuizGraph[[Quiz Subgraph]]
+    AlgoHandoff --> AlgoGraph[[Algo Subgraph]]
+    ChatHandoff --> ChatGraph[[Chat Subgraph]]
     
-    subgraph AlgoGraph [Algo Subgraph]
-        A_Init(Initialize) --> A_Router{Internal Router}
-        A_Router --"Intent: Code"--> A_Interviewer[Interviewer Role]
-        A_Router --"Intent: Help"--> A_Mentor[Mentor Role]
-        A_Interviewer --"Tools"--> Tool_Algo[Sandbox/Problem Tools]
-        A_Mentor --"Tools"--> Tool_RAG_A[RAG/Docs Tools]
-        A_Interviewer --> A_Handoff[Handoff to Supervisor]
-        A_Mentor --> A_Interviewer
-    end
+    QuizGraph --"Command: PARENT"--> Supervisor
+    AlgoGraph --"Command: PARENT"--> Supervisor
+    ChatGraph --"Command: PARENT"--> Supervisor
+```
+
+### 2.2 Chat Subgraph (Свободный диалог)
+
+Режим для общего общения и поиска информации.
+
+```mermaid
+graph TD
+    C_Start(Start) --> C_Router{Router}
     
-    subgraph ChatGraph [Chat Subgraph]
-        C_Init(Initialize) --> C_Agent{Chat Agent}
-        C_Agent --"Search"--> Tool_RAG[RAG Search]
-        C_Agent --"Web"--> Tool_Web[Tavily]
-        C_Agent --"Handoff"--> Supervisor
+    C_Router --"General Question"--> C_Direct[Direct Answer Node]
+    C_Router --"Technical Question"--> C_RAG[RAG Retrieval Node]
+    
+    C_RAG --> C_Prepare[Prepare Material Node]
+    C_Prepare --> C_Generate[RAG Answer Node]
+    
+    C_Direct --> C_End(End / Handoff)
+    C_Generate --> C_End
+    
+    subgraph "Chat Tools"
+        C_RAG --"Call"--> Tool_RAG[RAG API]
+        C_Prepare --"Call"--> Tool_Web[Tavily API]
     end
 ```
 
-### 2.2 Ключевые компоненты
+### 2.3 Quiz Subgraph (Тестирование)
 
-*   **Supervisor Graph (Global Orchestrator)**:
-    *   **Роль**: Маршрутизация запросов, управление глобальным состоянием, профилирование пользователя.
-    *   **Память**: Хранит `GlobalState` (история диалога, профиль компетенций).
-    *   **Логика**: Анализирует интент пользователя и передает управление в соответствующий подграф.
+Режим проведения квизов с разделением ролей экзаменатора и ментора.
 
-*   **Subgraphs (Specialized Agents)**:
-    *   **QuizGraph**: Проведение тестирования. Включает роли `Examiner` (строгая проверка) и `Mentor` (подсказки).
-    *   **AlgoGraph**: Алгоритмическое собеседование. Интегрирован с Code Sandbox. Включает роли `Interviewer` и `Mentor`.
-    *   **ChatGraph**: Свободный диалог с доступом к RAG (Учебник Яндекса) и Web Search (Tavily).
+```mermaid
+graph TD
+    Q_Start(Start) --> Q_Router{Internal Router}
+    
+    Q_Router --"Intent: Answer / Next"--> Q_Examiner[Examiner Role]
+    Q_Router --"Intent: Help / Explain"--> Q_Mentor[Mentor Role]
+    
+    Q_Examiner --"Correct?"--> Q_Check{Check Progress}
+    Q_Check --"More Questions"--> Q_End(End Step)
+    Q_Check --"Finished"--> Q_Eval[Evaluation Node]
+    
+    Q_Mentor --"Explanation"--> Q_End
+    Q_Eval --> Q_End
+    
+    subgraph "Quiz Tools"
+        Q_Examiner --"Call"--> Tool_Grade[Grade Exam]
+        Q_Eval --"Call"--> Tool_Gen[Generate Feedback]
+        Q_Mentor --"Call"--> Tool_Docs[Context7 / RAG]
+    end
+```
+
+### 2.4 Algo Subgraph (Алгоритмы)
+
+Режим решения задач с использованием Code Sandbox.
+
+```mermaid
+graph TD
+    A_Start(Start) --> A_Router{Internal Router}
+    
+    A_Router --"Intent: Code Submission"--> A_Interviewer[Interviewer Role]
+    A_Router --"Intent: Hint / Help"--> A_Mentor[Mentor Role]
+    
+    A_Interviewer --"Run Tests"--> A_Sandbox[Sandbox Node]
+    A_Sandbox --"Result"--> A_End(End Step)
+    
+    A_Mentor --"Scaffolding Hint"--> A_End
+    
+    subgraph "Algo Tools"
+        A_Interviewer --"Call"--> Tool_Problem[Get Problem Info]
+        A_Sandbox --"Call"--> Tool_Exec[Code Sandbox]
+        A_Mentor --"Call"--> Tool_Docs[Context7 / RAG]
+    end
+```
 
 ## 3. Управление состоянием (Scoped State)
 
-Мы используем стратегию **Scoped State** для изоляции контекста и предотвращения "засорения" памяти.
+Мы используем стратегию **Scoped State** для изоляции контекста.
 
-*   **GlobalState**:
-    ```python
-    class GlobalState(TypedDict):
-        messages: Annotated[list, add_messages] # Полная история
-        user_profile: dict                      # Карта компетенций {topic: score}
-        active_mode: Literal["quiz", "algo", "chat"]
-    ```
+*   **GlobalState**: Хранит `messages` (полная история), `user_profile` (компетенции), `active_mode`.
+*   **SubgraphState**: Хранит только локальные данные (например, `current_question_index` для квиза).
 
-*   **SubgraphState (например, QuizState)**:
-    ```python
-    class QuizState(TypedDict):
-        messages: list          # Локальная история (только в рамках квиза)
-        topic: str
-        current_question: str
-        attempts_left: int
-    ```
+**Маппинг (Handoff):**
+При переходе в подграф `Supervisor` передает только необходимые данные. При выходе подграф возвращает результаты через `Command(graph=Command.PARENT)`, которые обновляют глобальный профиль пользователя.
 
-**Передача данных (Mapping):**
-При входе в подграф `Supervisor` трансформирует `GlobalState` в `QuizState` (передает только нужный контекст). При выходе — обновляет `GlobalState` результатами (оценка, фидбек).
+## 4. Ролевая модель
 
-## 4. Ролевая модель и Промпт-инжиниринг
+Агент динамически меняет Persona:
+1.  **Core Identity**: Базовый эксперт (всегда в `SystemMessage`).
+2.  **Task Identity**: Специализация (Examiner, Mentor, Interviewer) в зависимости от узла.
 
-Агент динамически меняет "личность" (Persona) в зависимости от активного узла графа.
+## 5. Персистентность
 
-### 4.1 Динамическая инъекция персоны
-
-В каждом узле графа вызывается метод `_call_llm`, который собирает системный промпт из трех частей:
-1.  **Core Identity**: "Ты NetRunner, эксперт по ML..." (из `prompts/system_prompt.txt`).
-2.  **Role Instruction**: Специфика текущего режима (из `prompts/quiz/interviewer.txt` или `prompts/algo/mentor.txt`).
-3.  **Task Context**: Текущая задача и данные пользователя.
-
-### 4.2 Сценарии взаимодействия
-
-*   **Режим "Интервьюер" (Quiz/Algo Active)**:
-    *   Строгий тон.
-    *   Запрет на прямые ответы.
-    *   Использование RAG только для проверки фактов, но не для генерации решения.
-
-*   **Режим "Ментор" (Help/Feedback)**:
-    *   Эмпатичный тон.
-    *   Сократический метод (наводящие вопросы).
-    *   Использование RAG для поиска объяснений и аналогий.
-
-## 5. Инструментарий и Изоляция
-
-Инструменты (Tools) жестко привязаны к конкретным агентам внутри подграфов.
-
-*   `QuizGraph`: `generate_exam`, `grade_exam`.
-*   `AlgoGraph`: `get_algo_problem`, `run_code_sandbox`.
-*   `ChatGraph`: `rag_search`, `tavily_search`.
-
-Это гарантирует, что агент в режиме "Болталки" физически не сможет вызвать инструмент оценки кода или генерации экзамена.
-
-## 6. Персистентность и Handoff
-
-*   **Checkpointing**: Состояние сохраняется в Postgres/Redis на каждом шаге. Это позволяет пользователю прервать квиз и вернуться к нему через день.
-*   **Handoff**: Для выхода из подграфа (например, по команде "Стоп") используется механизм `Command(graph=Command.PARENT, goto="supervisor")`.
-
-## 7. Планы по развитию (Roadmap)
-
-1.  Внедрение **Multi-Source Retrieval**: Умный роутер для выбора источника (RAG vs Web vs Docs).
-2.  Интеграция с **LangSmith/LangFuse** для мониторинга качества ответов и A/B тестирования промптов.
+Благодаря механизму **Checkpointing** в LangGraph, состояние каждого подграфа сохраняется. Пользователь может прервать сессию и продолжить с того же места, используя тот же `thread_id`.
