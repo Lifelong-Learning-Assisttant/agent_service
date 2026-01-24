@@ -98,6 +98,30 @@ def quiz_agent_node(state: QuizState) -> Command[Literal["supervisor"]]:
 
 При повторном входе в подграф (`call_quiz_subgraph`), состояние инициализируется из `user_profile`, что позволяет продолжить с того же места, даже если локальный стейт подграфа был очищен.
 
+## 5. Диаграмма потоков данных
+
+```mermaid
+graph TD
+    UserInput --> Supervisor
+    Supervisor --"Route: Quiz"--> QuizGraph
+    
+    subgraph QuizGraph
+        InitQuiz(Initialize from Global State) --> Q_Agent[Quiz Agent]
+        Q_Agent --"Tool Call"--> EvalTool
+        EvalTool --> Q_Agent
+        Q_Agent --"Command(PARENT)"--> Supervisor
+    end
+    
+    subgraph ChatGraph
+        ChatAgent
+    end
+
+    Supervisor --"Route: Chat"--> ChatGraph
+    
+    %% Persistence Layer
+    QuizGraph -.->|Save Progress| GlobalState
+```
+
 ## Резюме для реализации
 
 1.  Создать отдельные классы `TypedDict` для `GlobalState` и каждого подграфа.
