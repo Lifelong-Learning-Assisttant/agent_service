@@ -27,17 +27,23 @@ graph TD
     Supervisor --"Route: Chat"--> ChatGraph
     
     subgraph QuizGraph [Quiz Subgraph]
-        Q_Init(Initialize) --> Q_Agent{Quiz Agent}
-        Q_Agent --"Generate"--> Tool_Gen[Generate Exam]
-        Q_Agent --"Grade"--> Tool_Grade[Grade Exam]
-        Q_Agent --"Handoff"--> Supervisor
+        Q_Init(Initialize) --> Q_Router{Internal Router}
+        Q_Router --"Intent: Answer"--> Q_Examiner[Examiner Role]
+        Q_Router --"Intent: Help"--> Q_Mentor[Mentor Role]
+        Q_Examiner --"Tools"--> Tool_Quiz[Generate/Grade Tools]
+        Q_Mentor --"Tools"--> Tool_RAG_Q[RAG/Docs Tools]
+        Q_Examiner --> Q_Handoff[Handoff to Supervisor]
+        Q_Mentor --> Q_Examiner
     end
     
     subgraph AlgoGraph [Algo Subgraph]
-        A_Init(Initialize) --> A_Agent{Algo Agent}
-        A_Agent --"Fetch Task"--> Tool_Task[Get Problem]
-        A_Agent --"Run Code"--> Tool_Exec[Code Sandbox]
-        A_Agent --"Handoff"--> Supervisor
+        A_Init(Initialize) --> A_Router{Internal Router}
+        A_Router --"Intent: Code"--> A_Interviewer[Interviewer Role]
+        A_Router --"Intent: Help"--> A_Mentor[Mentor Role]
+        A_Interviewer --"Tools"--> Tool_Algo[Sandbox/Problem Tools]
+        A_Mentor --"Tools"--> Tool_RAG_A[RAG/Docs Tools]
+        A_Interviewer --> A_Handoff[Handoff to Supervisor]
+        A_Mentor --> A_Interviewer
     end
     
     subgraph ChatGraph [Chat Subgraph]
