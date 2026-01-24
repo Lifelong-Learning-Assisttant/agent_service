@@ -1,510 +1,128 @@
-# Документация по агенту
+# Документация по агенту NetRunner (Архитектура 2026)
 
-## Обзор
+## 1. Введение
 
-Агент — это система на основе LangGraph, которая поддерживает сложные сценарии взаимодействия, включая простые разговоры, работу с RAG (Retrieval-Augmented Generation) и генерацию/оценку квизов.
+NetRunner — это продвинутый образовательный AI-агент, построенный на базе фреймворка **LangGraph** с использованием паттерна **"Router-driven Subgraphs"**. Эта архитектура обеспечивает модульность, изоляцию контекста и возможность динамического переключения ролей.
 
-Начиная с версии 2.0, агент поддерживает **множественные сессии** с автоматическим управлением состоянием, ограничением параллелизма и реальными уведомлениями в Web UI.
+## 2. Архитектура Supervisor + Subgraphs
 
-Начиная с версии 2.1, добавлены **асинхронные версии инструментов** для неблокирующих вызовов внешних сервисов.
+Система состоит из главного графа-оркестратора (`Supervisor`) и специализированных подграфов (`Subgraphs`), каждый из которых инкапсулирует логику конкретного режима работы.
 
-Начиная с версии 2.2, добавлена поддержка **Z.ai (GLM-4.6V/4.7)** с режимом **Reasoning** и обновлен Web UI для работы через **WebSocket**.
-
-## Архитектура
-
-### Система сессий
-
-Агент использует `AgentSession` для управления каждой отдельной сессией:
+### 2.1 Диаграмма архитектуры
 
 ```mermaid
 graph TD
-    A[Web UI] -->|create_session| B[AgentSystem]
-    B -->|create| C[AgentSession UUID-1]
-    B -->|create| D[AgentSession UUID-2]
-    C -->|notify_ui| A
-    D -->|notify_ui| A
-    C -->|call_tool| E[RAG/Test Generator]
-    D -->|call_tool| E
-```
-
-### Ключевые компоненты
-
-#### 1. **AgentSession**
-Отвечает за управление одной сессией:
-- Состояние: `state`, `task`, `last_active_at`, `created_at`, `last_events`
-- Управление жизненным циклом: `start()`, `cancel()`, `cleanup()`
-- Уведомления UI: `notify_ui()` с fire-and-forget (timeout 5 сек)
-- Вызов инструментов: `call_tool()` с прогресс-уведомлениями
-
-**Источник:** `agent_service/agent_session.py`
-
-#### 2. **AgentSystem**
-Централизованный менеджер сессий:
-- Sessions map: `sessions: Dict[str, AgentSession]`
-- Ограничение параллелизма: `session_semaphore: Semaphore`
-- Методы: `create_session()`, `get_session()`, `remove_session()`, `sweep_expired_sessions()`, `run()`
-
-**Источник:** `agent_service/agent_system.py`
-
-### Граф состояний (NetRunner Protocol v3.1)
-
-В версии 3.1 внедрен узел **Prepare Material** для унифицированной подготовки контекста из разных источников (RAG, Web, Docs) и упрощена логика переходов.
-
-```mermaid
-graph TD
-    Start((Start)) --> Planner{Planner}
+    User([Пользователь]) --> Supervisor{Supervisor Graph}
     
-    %% Ветвление на основе интента
-    Planner -->|general| Direct[Direct Answer]
-    Planner -->|rag_answer| Retrieve[Retrieve Docs]
-    Planner -->|generate_quiz| Retrieve
+    subgraph "Global Memory (Postgres)"
+        UserProfile[(User Profile)]
+        ChatHistory[(Chat History)]
+    end
     
-    %% Если квиз активен, Planner сразу направляет на обработку ответа
-    Planner -->|quiz_answering| Process[Process Answer]
-    Planner -->|evaluate_quiz| Eval[Evaluate Quiz]
-
-    %% Поток подготовки данных
-    Retrieve --> Prepare[Prepare Material]
+    Supervisor <--> UserProfile
+    Supervisor <--> ChatHistory
     
-    %% Использование подготовленных данных
-    Prepare -->|rag_answer| RAG_Ans[RAG Answer]
-    Prepare -->|generate_quiz| CreateQ[Create Quiz]
-
-    %% Цикл квиза
-    CreateQ --> End((End))
-    Process -->|next_question| End
-    Process -->|quiz_complete| Eval
+    Supervisor --"Route: Quiz"--> QuizGraph
+    Supervisor --"Route: Algo"--> AlgoGraph
+    Supervisor --"Route: Chat"--> ChatGraph
     
-    %% Завершение
-    Direct --> End
-    RAG_Ans --> End
-    Eval --> End
-```
-
-**Узлы:**
-- **Planner**: Центральный маршрутизатор. Если активен квиз, автоматически направляет ввод пользователя в `Process Answer`, если это не спец. команда.
-- **Retrieve**: Выполняет поиск документов в базе знаний (RAG). Возвращает сырые чанки с метаданными.
-- **Prepare Material**: Унифицированный узел обработки. Объединяет разрозненные чанки в связный Markdown ("Golden Source"), исправляет формулы LaTeX и фильтрует нерелевантное.
-- **RAG Answer**: Генерирует ответ пользователю, используя подготовленный Markdown как контекст.
-- **Create Quiz**: Генерирует вопросы для теста на основе подготовленного Markdown.
-- **Process Answer**: Записывает ответ пользователя, выдает следующий вопрос или инициирует оценку.
-- **Evaluate Quiz**: Проводит финальную оценку знаний и дает развернутый фидбек.
-
-### CLI Команды
-- `/finish_quizz` — Немедленное завершение теста и получение оценки.
-- `/skip_question` — Пропуск текущего вопроса.
-
-### Определение намерений (Intent Determination)
-
-Механизм определения намерений пользователя реализован в методе `_determine_intent` класса `AgentSystem`.
-
-**Принцип работы:**
-1.  **Универсальность**: Используется `JsonOutputParser` из LangChain, что обеспечивает стабильную работу с любыми LLM-провайдерами (OpenAI, OpenRouter, Z.ai), независимо от их нативной поддержки Function Calling.
-2.  **Структурированный вывод**: Система просит модель вернуть ответ в формате JSON, соответствующем Pydantic-модели `IntentModel`. Инструкции по форматированию генерируются парсером автоматически.
-3.  **Надежность (Fallback)**:
-    *   Парсер умеет извлекать JSON даже если он обернут в Markdown-блоки или окружен пояснительным текстом.
-    *   В случае критической ошибки генерации или парсинга, система автоматически переключается на намерение `general`, гарантируя бесперебойную работу.
-
-**Возможные намерения:**
-- `general`: Общие вопросы и болталка.
-- `rag_answer`: Вопросы по материалам учебника (требуют поиска в RAG). В режиме квиза — уточняющий вопрос.
-- `generate_quiz`: Запрос на создание нового теста.
-- `evaluate_quiz`: Запрос на оценку результатов или завершение теста.
-- `skip_question`: Пропуск текущего вопроса квиза.
-- `quiz_answering`: Ответ на конкретный вопрос в процессе квиза.
-
-## Async инструменты
-
-### Доступные async-инструменты
-
-**Источник:** `agent_service/langchain_tools.py`
-
-```python
-from langchain_tools import (
-    rag_search_async,
-    rag_generate_async,
-    generate_exam_async,
-    grade_exam_async
-)
-```
-
-#### 1. `rag_search_async(query, top_k, use_hyde)`
-Асинхронный поиск документов через RAG сервис.
-
-**Пример:**
-```python
-result = await rag_search_async(
-    query="машинное обучение",
-    top_k=5,
-    use_hyde=False
-)
-# Возвращает: JSON строку с результатами поиска
-```
-
-#### 2. `rag_generate_async(query, top_k, temperature, use_hyde)`
-Асинхронная генерация ответа через RAG сервис.
-
-**Пример:**
-```python
-result = await rag_generate_async(
-    query="Объясни ML",
-    top_k=5,
-    temperature=0.7,
-    use_hyde=False
-)
-# Возвращает: JSON строку с ответом
-```
-
-#### 3. `generate_exam_async(markdown_content, config)`
-Асинхронная генерация экзамена через test_generator.
-
-**Пример:**
-```python
-config = {
-    "total_questions": 5,
-    "single_choice_count": 3,
-    "multiple_choice_count": 1,
-    "open_ended_count": 1,
-    "provider": "local"
-}
-
-result = await generate_exam_async(
-    markdown_content="# Python Basics\n...",
-    config=config
-)
-# Возвращает: JSON строку с экзаменом
-```
-
-#### 4. `grade_exam_async(exam_id, answers)`
-Асинхронная оценка ответов на экзамен.
-
-**Пример:**
-```python
-answers = [
-    {"question_id": "q1", "choice": [0]},
-    {"question_id": "q2", "text_answer": "Ответ"}
-]
-
-result = await grade_exam_async(
-    exam_id="ex-123",
-    answers=answers
-)
-# Возвращает: JSON строку с результатами оценки
-```
-
-### Инфраструктура
-
-**Настройки:**
-- `test_generator_service_url`: `http://api:52812`
-- `http_timeout_s`: таймаут HTTP запросов
-- Docker сеть: `test_generator_default`
-
-**Зависимости:**
-- `httpx` — для async HTTP запросов
-
-### Использование в AgentSession
-
-```python
-async def _run_graph(self, question):
-    # Шаг 1: Планирование
-    await self.notify_ui(step="planning", message="Создаю план...")
+    subgraph QuizGraph [Quiz Subgraph]
+        Q_Init(Initialize) --> Q_Agent{Quiz Agent}
+        Q_Agent --"Generate"--> Tool_Gen[Generate Exam]
+        Q_Agent --"Grade"--> Tool_Grade[Grade Exam]
+        Q_Agent --"Handoff"--> Supervisor
+    end
     
-    # Шаг 2: Поиск (async)
-    rag_result = await rag_search_async(query=question, top_k=5)
+    subgraph AlgoGraph [Algo Subgraph]
+        A_Init(Initialize) --> A_Agent{Algo Agent}
+        A_Agent --"Fetch Task"--> Tool_Task[Get Problem]
+        A_Agent --"Run Code"--> Tool_Exec[Code Sandbox]
+        A_Agent --"Handoff"--> Supervisor
+    end
     
-    # Шаг 3: Генерация экзамена (async)
-    exam = await generate_exam_async(markdown_content, config)
-    
-    # Шаг 4: Оценка (async)
-    grade = await grade_exam_async(exam.exam_id, answers)
-    
-    return grade
+    subgraph ChatGraph [Chat Subgraph]
+        C_Init(Initialize) --> C_Agent{Chat Agent}
+        C_Agent --"Search"--> Tool_RAG[RAG Search]
+        C_Agent --"Web"--> Tool_Web[Tavily]
+        C_Agent --"Handoff"--> Supervisor
+    end
 ```
 
-### Совместимость
+### 2.2 Ключевые компоненты
 
-Сохранены sync версии для обратной совместимости:
-```python
-# Sync (старый вариант)
-from langchain_tools import rag_search, generate_exam
+*   **Supervisor Graph (Global Orchestrator)**:
+    *   **Роль**: Маршрутизация запросов, управление глобальным состоянием, профилирование пользователя.
+    *   **Память**: Хранит `GlobalState` (история диалога, профиль компетенций).
+    *   **Логика**: Анализирует интент пользователя и передает управление в соответствующий подграф.
 
-# Async (новый вариант)
-from langchain_tools import rag_search_async, generate_exam_async
-```
+*   **Subgraphs (Specialized Agents)**:
+    *   **QuizGraph**: Проведение тестирования. Включает роли `Examiner` (строгая проверка) и `Mentor` (подсказки).
+    *   **AlgoGraph**: Алгоритмическое собеседование. Интегрирован с Code Sandbox. Включает роли `Interviewer` и `Mentor`.
+    *   **ChatGraph**: Свободный диалог с доступом к RAG (Учебник Яндекса) и Web Search (Tavily).
 
-### Тестирование
+## 3. Управление состоянием (Scoped State)
 
-**Результаты:**
-```
-Генерируем экзамен...
-✅ Сгенерирован экзамен: ex-0ec33740
+Мы используем стратегию **Scoped State** для изоляции контекста и предотвращения "засорения" памяти.
 
-Оцениваем ответы...
-✅ Результаты оценки:
-   Счет: 75.0 %
-   Правильно: 1 / 2
-```
+*   **GlobalState**:
+    ```python
+    class GlobalState(TypedDict):
+        messages: Annotated[list, add_messages] # Полная история
+        user_profile: dict                      # Карта компетенций {topic: score}
+        active_mode: Literal["quiz", "algo", "chat"]
+    ```
 
-**Подробности:** см. `agent_service/docs/async_tools_setup.md`
+*   **SubgraphState (например, QuizState)**:
+    ```python
+    class QuizState(TypedDict):
+        messages: list          # Локальная история (только в рамках квиза)
+        topic: str
+        current_question: str
+        attempts_left: int
+    ```
 
-## Управление сессиями
+**Передача данных (Mapping):**
+При входе в подграф `Supervisor` трансформирует `GlobalState` в `QuizState` (передает только нужный контекст). При выходе — обновляет `GlobalState` результатами (оценка, фидбек).
 
-### Создание и запуск
+## 4. Ролевая модель и Промпт-инжиниринг
 
-```python
-from agent_system import AgentSystem
+Агент динамически меняет "личность" (Persona) в зависимости от активного узла графа.
 
-agent = AgentSystem()
+### 4.1 Динамическая инъекция персоны
 
-# Создание сессии
-session_id = agent.create_session()
+В каждом узле графа вызывается метод `_call_llm`, который собирает системный промпт из трех частей:
+1.  **Core Identity**: "Ты NetRunner, эксперт по ML..." (из `prompts/system_prompt.txt`).
+2.  **Role Instruction**: Специфика текущего режима (из `prompts/quiz/interviewer.txt` или `prompts/algo/mentor.txt`).
+3.  **Task Context**: Текущая задача и данные пользователя.
 
-# Запуск задачи
-result = await agent.run(
-    question="Создай квиз по машинному обучению",
-    session_id=session_id
-)
-```
+### 4.2 Сценарии взаимодействия
 
-### Уведомления в Web UI
+*   **Режим "Интервьюер" (Quiz/Algo Active)**:
+    *   Строгий тон.
+    *   Запрет на прямые ответы.
+    *   Использование RAG только для проверки фактов, но не для генерации решения.
 
-Система автоматически отправляет уведомления на URL из конфига:
+*   **Режим "Ментор" (Help/Feedback)**:
+    *   Эмпатичный тон.
+    *   Сократический метод (наводящие вопросы).
+    *   Использование RAG для поиска объяснений и аналогий.
 
-**Типы уведомлений:**
-- `start` — начало выполнения
-- `progress` — промежуточный результат
-- `done` — завершение успешно
-- `error` — ошибка выполнения
-- `cancelled` — отмена пользователем
+## 5. Инструментарий и Изоляция
 
-**Формат:**
-```json
-{
-  "session_id": "uuid-1",
-  "step": "rag_search",
-  "message": "Поиск документов...",
-  "tool": "rag_search",
-  "level": "info",
-  "meta": {"query": "машинное обучение"},
-  "timestamp": "2025-12-25T13:00:00Z"
-}
-```
+Инструменты (Tools) жестко привязаны к конкретным агентам внутри подграфов.
 
-### Управление ресурсами
+*   `QuizGraph`: `generate_exam`, `grade_exam`.
+*   `AlgoGraph`: `get_algo_problem`, `run_code_sandbox`.
+*   `ChatGraph`: `rag_search`, `tavily_search`.
 
-#### Очистка протухших сессий
+Это гарантирует, что агент в режиме "Болталки" физически не сможет вызвать инструмент оценки кода или генерации экзамена.
 
-```python
-# Автоматическая очистка (внутри run())
-agent.sweep_expired_sessions()
+## 6. Персистентность и Handoff
 
-# Ручная очистка
-agent.sweep_expired_sessions(force=True)
-```
+*   **Checkpointing**: Состояние сохраняется в Postgres/Redis на каждом шаге. Это позволяет пользователю прервать квиз и вернуться к нему через день.
+*   **Handoff**: Для выхода из подграфа (например, по команде "Стоп") используется механизм `Command(graph=Command.PARENT, goto="supervisor")`.
 
-**Параметры:**
-- `session_ttl_seconds`: 600 (10 минут) из конфига
-- Удаляет сессии без активности > 10 минут
+## 7. Планы по развитию (Roadmap)
 
-#### Ограничение параллелизма
-
-Максимум 2 сессии одновременно (из конфига `concurrency_limit`). При превышении выполнение блокируется до освобождения слота.
-
-## Конфигурация
-
-### Настройки
-
-**Источник:** `agent_service/settings.py`
-
-```python
-web_ui_url: str = "http://localhost:8150"
-session_ttl_seconds: int = 600
-concurrency_limit: int = 2
-test_generator_service_url: str = "http://api:52812"
-http_timeout_s: int = 30
-```
-
-### Конфигурационные файлы
-
-**Источники:**
-- `agent_service/app_settings-dev.json`
-- `agent_service/app_settings-prod.json`
-
-```json
-{
-  "web_ui_url": "http://localhost:8150",
-  "session_ttl_seconds": 600,
-  "concurrency_limit": 2,
-  "test_generator_service_url": "http://api:52812",
-  "http_timeout_s": 30
-}
-```
-
-## Примеры использования
-
-### Простой разговор
-
-```python
-agent = AgentSystem()
-result = await agent.run("Привет! Как дела?", session_id="chitchat_session")
-```
-
-### Работа с RAG
-
-```python
-agent = AgentSystem()
-result = await agent.run(
-    "Расскажи о машинном обучении из учебника Яндекса",
-    session_id="rag_session"
-)
-```
-
-### Генерация и оценка квиза
-
-```python
-agent = AgentSystem()
-
-# Генерируем квиз
-quiz_result = await agent.run(
-    "Создай квиз по машинному обучению",
-    session_id="quiz_session"
-)
-
-# Оцениваем ответы (контекст сохраняется)
-evaluation_result = await agent.run(
-    "Вот мои ответы: ответ 1, ответ 2",
-    session_id="quiz_session"
-)
-```
-
-### Множественные сессии
-
-```python
-agent = AgentSystem()
-
-# Сессия 1: Генерация квиза
-session1 = agent.create_session()
-await agent.run("Создай квиз по Python", session_id=session1)
-
-# Сессия 2: RAG-ответ (параллельно)
-session2 = agent.create_session()
-await agent.run("Объясни ML", session_id=session2)
-```
-
-### Управление сессиями
-
-```python
-agent = AgentSystem()
-
-# Создать сессию
-session_id = agent.create_session()
-
-# Проверить статус
-session = agent.get_session(session_id)
-if session:
-    print(f"Активна: {session.is_running()}")
-    print(f"Возраст: {session.get_age_seconds()} сек")
-
-# Отменить выполнение
-await agent.get_session(session_id).cancel()
-
-# Удалить сессию
-agent.remove_session(session_id)
-```
-
-## Безопасность и ограничения
-
-### Ограничение параллелизма
-- Максимум 2 сессии одновременно (настраивается через `concurrency_limit`)
-- Используется `asyncio.Semaphore`
-
-### Таймауты
-- **UI уведомления**: 5 секунд на HTTP запрос
-- **Сессия**: 10 минут без активности (TTL)
-- **Инструменты**: Настраивается через `http_timeout_s` (по умолчанию 30 сек)
-
-### Потокобезопасность
-- `asyncio.Lock` для защиты состояния сессии
-- `asyncio.Semaphore` для ограничения параллелизма
-- `deque(maxlen=200)` для истории событий
-
-## Логирование
-
-Все компоненты логируют действия:
-
-```bash
-2025-12-25 13:00:00 | INFO | agent_system | Инициализация агента: provider=openai
-2025-12-25 13:00:01 | INFO | agent_session | AgentSession created: uuid-1
-2025-12-25 13:00:02 | INFO | agent_session | Start processing: uuid-1
-2025-12-25 13:00:03 | INFO | agent_session | Tool call: rag_search
-2025-12-25 13:00:05 | INFO | agent_session | UI notification sent: uuid-1
-2025-12-25 13:00:10 | INFO | agent_session | Task completed: uuid-1
-2025-12-25 16:00:00 | INFO | langchain_tools | Async calling test generator service at http://api:52812/api/generate
-```
-
-## Тестирование
-
-### Unit тесты
-
-```bash
-docker run --rm -v $(pwd):/app -w /app agent_service_test uv run pytest tests/ -v
-# Результат: 32/32 тестов ✅
-```
-
-**Покрытие:**
-- `test_agent_session_updated.py`: 17 тестов
-- `test_agent_system_sessions.py`: 15 тестов
-
-**Источники тестов:**
-- `agent_service/tests/test_agent_session_updated.py`
-- `agent_service/tests/test_agent_system_sessions.py`
-
-### Интеграционные тесты
-
-См. `agent_service/tests/addititional/` и `agent_service/tests/components/` для тестов с внешними сервисами.
-
-## Производительность
-
-- **Создание сессии**: < 1 мс
-- **Запуск задачи**: ~2-5 сек (зависит от RAG/генерации)
-- **Уведомление UI**: < 5 сек (с таймаутом)
-- **Очистка сессий**: < 100 мс (100 сессий)
-- **RAG search**: 1-3 сек
-- **Generate exam**: 3-10 сек
-- **Grade exam**: 1-2 сек
-
-## Миграция с v1.x
-
-### Старый API (v1.x)
-```python
-agent = AgentSystem()
-result = agent.run("question", session_id="session")
-```
-
-### Новый API (v2.x)
-```python
-agent = AgentSystem()
-result = await agent.run("question", session_id="session")
-```
-
-**Изменения:**
-- ✅ Автоматическое создание сессий
-- ✅ Реальные уведомления в Web UI
-- ✅ Ограничение параллелизма
-- ✅ Автоматическая очистка
-- ✅ Подробная история событий
-- ✅ Async инструменты (v2.1)
-
-## Заключение
-
-Система сессий агента обеспечивает:
-
-- **Масштабируемость**: Множество параллельных сессий
-- **Надежность**: Автоматическое управление ресурсами
-- **Прозрачность**: Реальные уведомления о прогрессе
-- **Безопасность**: Ограничение параллелизма и таймауты
-- **Гибкость**: Конфигурируемые параметры
-- **Асинхронность**: Неблокирующие вызовы внешних сервисов
-
-Для более подробной информации о тестировании агента, см. [Документация по тестам](test_documentation.md).
-Для настройки async-инструментов, см. [Async tools setup](async_tools_setup.md).
+1.  Внедрение **Multi-Source Retrieval**: Умный роутер для выбора источника (RAG vs Web vs Docs).
+2.  Интеграция с **LangSmith/LangFuse** для мониторинга качества ответов и A/B тестирования промптов.
