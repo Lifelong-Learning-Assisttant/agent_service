@@ -29,7 +29,6 @@ class LLMSettings(BaseSettings):
     - Отсутствие переменных окружения НЕ приводит к ошибкам — используются дефолты.
     """
     model_config = SettingsConfigDict(
-        env_prefix="LLM_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -44,13 +43,13 @@ class LLMSettings(BaseSettings):
     # ---- OpenAI ----
     openai_chat_model: str = Field(default="gpt-4o-mini")
     openai_emb_model: str = Field(default="text-embedding-3-small")
-    openai_api_key: SecretStr | None = Field(default=None)
+    openai_api_key: SecretStr | None = Field(default=None, alias="OPENAI_API_KEY")
 
     # ---- OpenRouter ----
     openrouter_chat_model: str = Field(default="openrouter/auto")
     openrouter_emb_model: str = Field(default="text-embedding-3-small")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
-    openrouter_api_key: SecretStr | None = Field(default=None)
+    openrouter_api_key: SecretStr | None = Field(default=None, alias="OPENROUTER_API_KEY")
 
     # Таймауты и ретраи
     request_timeout_s: float = 60.0
@@ -67,7 +66,8 @@ class LLMSettings(BaseSettings):
     addition_service_url: str | None = Field(default=None)
     rag_service_url: str | None = Field(default=None)
     test_generator_service_url: str | None = Field(default=None)
-    context7_api_key: SecretStr | None = Field(default=None)
+    context7_api_key: SecretStr | None = Field(default=None, alias="CONTEXT7_API_KEY")
+    tavily_api_key: SecretStr | None = Field(default=None, alias="TAVILY_API_KEY")
     http_timeout_s: float = Field(default=60.0)
 
     # Батч для эмбеддингов
@@ -76,13 +76,13 @@ class LLMSettings(BaseSettings):
     # ---- Mistral ----
     mistral_chat_model: str = Field(default="mistral-large-latest")
     mistral_emb_model: str = Field(default="mistral-embed")
-    mistral_api_key: SecretStr | None = Field(default=None)
+    mistral_api_key: SecretStr | None = Field(default=None, alias="MISTRAL_API_KEY")
 
     # ---- Z.ai ----
     zai_chat_model: str = Field(default="glm-4.6v")
     zai_emb_model: str = Field(default="text-embedding-3-small")
     zai_base_url: str = Field(default="https://api.z.ai/api/coding/paas/v4/")
-    zai_api_key: SecretStr | None = Field(default=None)
+    zai_api_key: SecretStr | None = Field(default=None, alias="ZAI_API_KEY")
     
     # ---- Системный промпт ----
     system_prompt: str = Field(default="")
