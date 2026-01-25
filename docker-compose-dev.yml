@@ -7,7 +7,7 @@ services:
       context: .
       dockerfile: Dockerfile-dev
     ports:
-      - "8270:8270"
+      - "127.0.0.1:8270:8270"
     volumes:
       - .:/app
       - /app/__pycache__
