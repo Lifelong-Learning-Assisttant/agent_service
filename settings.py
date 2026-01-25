@@ -29,7 +29,7 @@ class LLMSettings(BaseSettings):
     - Отсутствие переменных окружения НЕ приводит к ошибкам — используются дефолты.
     """
     model_config = SettingsConfigDict(
-        env_prefix="LLM_",
+        env_prefix="",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -44,6 +44,7 @@ class LLMSettings(BaseSettings):
     # ---- OpenAI ----
     openai_chat_model: str = Field(default="gpt-4o-mini")
     openai_emb_model: str = Field(default="text-embedding-3-small")
+    openai_base_url: str | None = Field(default=None)
     openai_api_key: SecretStr | None = Field(default=None)
 
     # ---- OpenRouter ----

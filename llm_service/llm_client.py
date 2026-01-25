@@ -219,7 +219,7 @@ class LLMClient:
                 connect_s=self.cfg.connect_timeout_s,
                 request_s=self.cfg.request_timeout_s,
             )
-            common = dict(model=m, api_key=key, timeout=timeout, max_retries=0, **kwargs)
+            common = dict(model=m, timeout=timeout, max_retries=0, **kwargs)
             
             # Добавляем поддержку reasoning для Z.ai если нужно
             if p == "zai":
@@ -228,8 +228,9 @@ class LLMClient:
                 pass
 
             if p == "openai":
-                self.log.debug("create_chat: OpenAI, model=%s", m)
-                return ChatOpenAI(**common)
+                base_url = getattr(self.cfg, "openai_base_url", None)
+                self.log.debug("create_chat: OpenAI, model=%s, base=%s", m, base_url)
+                return ChatOpenAI(**common, base_url=base_url, api_key=key)
 
             if p == "zai":
                 base_url = getattr(self.cfg, "zai_base_url", "https://api.z.ai/v1")
@@ -247,7 +248,7 @@ class LLMClient:
                 getattr(self.cfg, "openrouter_title", None),
             )
             self.log.debug("create_chat: OpenRouter, model=%s, base=%s", m, base_url)
-            return ChatOpenAI(**common, base_url=base_url, default_headers=headers)
+            return ChatOpenAI(**common, base_url=base_url, default_headers=headers, api_key=key)
 
         if p == "mistral":
             # Mistral ждёт timeout как int секунд
