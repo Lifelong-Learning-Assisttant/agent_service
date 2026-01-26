@@ -13,7 +13,7 @@ from state import AgentState
 from graphs.retrieval import retrieval_graph
 from llm_service.llm_client import LLMClient
 from settings import get_settings
-from langchain_tools import grade_exam_async
+from tools import grade_exam_async, generate_exam_async
 
 log = logging.getLogger(__name__)
 
@@ -108,9 +108,10 @@ async def quiz_router_node(state: AgentState, config: Optional[Dict] = None) -> 
     intent_map = {
         "answer": "quiz_answering",
         "skip": "skip_question",
-        "help": "quiz_answering", 
+        "help": "quiz_answering",
         "stop": "evaluate_quiz",
-        "search": "rag_answer"
+        "search": "rag_answer",
+        "quiz": "generate_quiz"
     }
 
     if session:
@@ -135,23 +136,36 @@ async def mcq_judge_node(state: AgentState, config: Optional[Dict] = None) -> Di
         return {"intent": "evaluate_quiz"}
 
     current_q = questions[idx]
-    # Ожидаем формат: /answer [0, 2]
-    match = re.search(r"\[(.*?)\]", user_msg)
-    if not match:
-        # Если формат неверный, пробуем считать это текстовым ответом (fallback)
-        return await open_judge_node(state, config)
+    
+    # 1. Проверка на слэш-команду /answer [indices]
+    match = re.search(r"/answer\s*\[(.*?)\]", user_msg)
+    if match:
+        try:
+            selected_indices = [int(i.strip()) for i in match.group(1).split(",") if i.strip()]
+        except:
+            return await open_judge_node(state, config)
+    else:
+        # 2. Если это просто число (индекс) в режиме ANSWER_QUIZ
+        if state.get("interaction_mode") == "ANSWER_QUIZ" and user_msg.isdigit():
+            selected_indices = [int(user_msg)]
+        else:
+            # 3. Иначе считаем это открытым ответом
+            return await open_judge_node(state, config)
 
-    try:
-        selected_indices = [int(i.strip()) for i in match.group(1).split(",") if i.strip()]
-    except:
-        return await open_judge_node(state, config)
-
-    # В объекте вопроса от test_generator правильные индексы лежат в 'correct'
-    # Но в нашем _parse_quiz_result мы их теряли. Нужно будет обновить парсер.
-    # Пока предполагаем, что они есть в объекте.
+    # В объекте вопроса от test_generator правильные индексы лежат в 'correct_indices'
     correct_indices = current_q.get("correct_indices", [])
     
-    is_correct = set(selected_indices) == set(correct_indices)
+    # Если индексов нет (бывает при сбое парсинга), но есть эталонный ответ 'a'
+    if not correct_indices and current_q.get("a"):
+        # Попытка найти индекс правильного ответа в опциях
+        options = current_q.get("options", [])
+        correct_text = current_q.get("a")
+        for i, opt in enumerate(options):
+            if opt.strip() == correct_text.strip():
+                correct_indices = [i]
+                break
+
+    is_correct = set(selected_indices) == set(correct_indices) if correct_indices else False
     score = 1.0 if is_correct else 0.0
     
     # Сохраняем результат в историю
@@ -428,12 +442,80 @@ def route_quiz(state: AgentState) -> str:
         return "mcq_judge"
     return "open_judge"
 
+# --- Additional V3 Nodes ---
+
+async def generate_quiz_node(state: AgentState, config: Optional[Dict] = None) -> Dict[str, Any]:
+    """
+    Generates a quiz based on prepared material or a topic.
+    """
+    session = config.get("configurable", {}).get("session") if config else None
+    if session:
+        await session.notify_ui(step="start_generate_exam", message="Генерация вопросов квиза...", tool="generate_exam")
+
+    # 1. Get material (if not present, try to retrieve first or use general topic)
+    material = state.get("prepared_material", "")
+    if not material:
+        # Fallback to general ML topic if no material prepared
+        material = "Основы машинного обучения, нейронные сети, градиентный спуск."
+
+    # 2. Call generator tool
+    cfg = get_settings()
+    quiz_config = {
+        "total_questions": getattr(cfg, "quiz_total_questions", 3),
+        "language": "ru"
+    }
+    
+    try:
+        raw_quiz = await generate_exam_async(material, config=quiz_config)
+        data = json.loads(raw_quiz)
+        
+        # Simple parsing logic (V3 style)
+        questions = []
+        for q in data.get("questions", []):
+            questions.append({
+                "q": q.get("stem", ""),
+                "a": q.get("reference_answer", ""),
+                "options": q.get("options", []),
+                "correct_indices": q.get("correct", []),
+                "type": q.get("type", "single_choice")
+            })
+        
+        if not questions:
+            raise ValueError("No questions generated")
+
+        first_q = questions[0]
+        msg = f"Начинаем квиз! Вопрос №1:\n{first_q['q']}"
+        
+        if session:
+            await session.notify_ui(
+                step="quizz_question",
+                message=msg,
+                tool="interviewer",
+                meta={
+                    "current_quiz_index": 0,
+                    "total_questions": len(questions),
+                    "options": first_q.get("options"),
+                    "type": first_q.get("type")
+                }
+            )
+
+        return {
+            "quiz_questions": questions,
+            "current_quiz_index": 0,
+            "quiz_history": [],
+            "final_answer": f"[SYSTEM: QUIZ_STARTED] {msg}"
+        }
+    except Exception as e:
+        log.error(f"Quiz generation failed: {e}")
+        return {"final_answer": "Извините, не удалось сгенерировать квиз. Попробуйте другой вопрос."}
+
 # --- Graph Assembly ---
 
 def build_quiz_graph():
     builder = StateGraph(AgentState)
     
     builder.add_node("quiz_router", quiz_router_node)
+    builder.add_node("generate_quiz", generate_quiz_node)
     builder.add_node("mcq_judge", mcq_judge_node)
     builder.add_node("open_judge", open_judge_node)
     builder.add_node("explainer", explainer_node)
@@ -453,13 +535,15 @@ def build_quiz_graph():
             "open_judge": "open_judge",
             "skip": "skip",
             "mentor": "mentor",
-            "search": "retrieval"
+            "search": "retrieval",
+            "generate_quiz": "generate_quiz"
         }
     )
     
     builder.add_edge("mcq_judge", "explainer")
     builder.add_edge("open_judge", "explainer")
     builder.add_edge("explainer", "check_progress")
+    builder.add_edge("generate_quiz", END)
     
     builder.add_edge("retrieval", "interviewer_hint")
     builder.add_edge("interviewer_hint", END)

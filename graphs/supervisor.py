@@ -12,6 +12,7 @@ from graphs.chat import chat_graph
 from graphs.quiz import quiz_graph
 from graphs.retrieval import retrieval_graph
 from llm_service.llm_client import LLMClient
+from tools import generate_exam_async
 from settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -124,9 +125,9 @@ async def profile_update_node(state: AgentState, config: Optional[Dict] = None) 
 
 def route_from_supervisor(state: AgentState) -> str:
     intent = state.get("intent")
-    if intent == "quiz":
+    if intent == "quiz" or intent == "generate_quiz" or intent == "evaluate_quiz" or intent == "quiz_answering" or intent == "skip_question":
         return "quiz"
-    if intent == "algo":
+    if intent == "algo" or intent == "algo_help":
         return "algo_placeholder"
     if intent == "search":
         return "search"

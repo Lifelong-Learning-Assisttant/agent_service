@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from state import AgentState
 from graphs.retrieval import retrieval_graph
 from llm_service.llm_client import LLMClient
+from tools import rag_search_async
 from settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -91,12 +92,23 @@ async def direct_answer_node(state: AgentState, config: Optional[Dict] = None) -
 
     messages = [SystemMessage(content=system_prompt)]
     # Add conversation history (last 5 messages for context)
-    history = state.get("messages", [])[-5:]
+    raw_history = state.get("messages")
+    if not isinstance(raw_history, list):
+        raw_history = []
+    
+    history = raw_history[-5:]
     messages.extend(history)
     
     # If the last message is not the current question, add it
-    if not history or history[-1].content != state.get("question"):
-        messages.append(HumanMessage(content=state.get("question", "")))
+    current_q = state.get("question") or ""
+    
+    # Безопасная проверка последнего сообщения
+    last_content = ""
+    if history and hasattr(history[-1], 'content'):
+        last_content = history[-1].content
+    
+    if not history or last_content != current_q:
+        messages.append(HumanMessage(content=current_q))
 
     settings = get_settings()
     client = LLMClient(provider=settings.default_provider)
