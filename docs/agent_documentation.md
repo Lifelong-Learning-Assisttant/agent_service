@@ -100,42 +100,51 @@ graph TD
 2.  **Aggregator**: Собирает сырые фрагменты (chunks) из всех выбранных источников.
 3.  **Prepare Material**: Узел-"редактор", который синтезирует связный учебный текст, исправляет формулы LaTeX и удаляет дубликаты.
 
-### 2.3 Quiz Subgraph (Тестирование)
+### 2.3 Quiz Subgraph (Тестирование v3.5)
 
-Режим проведения квизов с разделением ролей интервьюера (процесс) и ментора (результат).
+Режим проведения квизов с гибридной оценкой и детерминированным роутингом.
 
 ```mermaid
 graph TD
-    Q_Start(Start) --> Q_Router{Internal Router}
+    Q_Start(Start) --> Q_Router{Deterministic Router}
     
-    Q_Router --"Intent: Answer / Next"--> Q_Interviewer[Interviewer Role]
-    Q_Router --"Intent: Help / Explain"--> Q_Interviewer
+    Q_Router --"Regex: /answer"--> Q_MCQ[MCQ Judge: Code]
+    Q_Router --"Mode: ANSWER_QUIZ"--> Q_Open[Open-ended Judge: LLM]
     Q_Router --"Intent: Skip"--> Q_Skip[Skip Node]
     Q_Router --"Intent: Search"--> Q_Search[[Shared Retrieval Subgraph]]
     
-    Q_Interviewer --"Process Answer"--> Q_Check{Check Progress}
-    Q_Interviewer --"Small Hint"--> Q_End(End Step)
+    Q_MCQ --> Q_Explain[Explainer Node]
+    Q_Open --> Q_Explain
     
-    Q_Skip --"Mark as Skipped"--> Q_Check
+    Q_Search --> Q_Hint[Interviewer Hint]
     
-    Q_Check --"More Questions"--> Q_End
+    Q_Explain --> Q_Check{Check Progress}
+    Q_Skip --> Q_Check
+    
+    Q_Check --"More Questions"--> Q_End(End Step)
     Q_Check --"Finished / Stop"--> Q_Mentor[Mentor Role]
     
-    Q_Search --"Context"--> Q_Interviewer
+    Q_Hint --> Q_End
     Q_Mentor --"Feedback / Discussion"--> Q_Mentor
     Q_Mentor --"Intent: Exit"--> Q_End
-    
-    subgraph "Quiz Tools"
-        Q_Interviewer --"Call"--> Tool_Grade[Grade Exam]
-        Q_Mentor --"Call"--> Tool_Gen[Generate Feedback]
-    end
 ```
 
 **Логика работы:**
-1.  **Internal Router**: Направляет поток в зависимости от действий пользователя.
-2.  **Interviewer**: Ведет процесс квиза. Принимает ответы, дает небольшие уточнения (используя `Shared Retrieval`), но не раскрывает правильный ответ до завершения.
-3.  **Skip**: Фиксирует пропуск вопроса без ответа и инициирует переход к следующему.
-4.  **Mentor**: Активируется после завершения квиза (или по требованию "Стоп"). Проводит глубокий разбор всех ответов, дает развернутую обратную связь и правильные решения. Остается в активном состоянии для обсуждения результатов и ответов на уточняющие вопросы пользователя, пока тот не подтвердит окончательное завершение сессии квиза.
+1.  **Deterministic Router**: Обеспечивает безошибочное разделение потоков данных.
+    *   Ответы из интерфейса (`/answer [indices]`) и текстовые ответы в режиме `ANSWER_QUIZ` направляются напрямую к судьям.
+    *   Уточняющие вопросы в режиме `AI_SYNC` активируют поиск через `Shared Retrieval`.
+    *   Слэш-команды (`/skip`, `/finish`) обрабатываются алгоритмически.
+2.  **Hybrid Judges (Система оценки)**:
+    *   **MCQ Judge**: Выполняет мгновенную программную проверку индексов (Single/Multiple Choice).
+    *   **Open-ended Judge**: Реализует паттерн **LLM-as-a-Judge**, сравнивая семантику ответа пользователя с эталоном. Возвращает `score` (0-1) и `reasoning`.
+3.  **Explainer**: Узел закрепления знаний. После каждой оценки генерирует краткое экспертное пояснение, помогая студенту сразу понять свои ошибки.
+4.  **Interviewer Hint**: Работает в связке с `Shared Retrieval`. Дает наводки на основе учебных материалов, сохраняя интригу и не раскрывая правильный ответ.
+5.  **Mentor**: Финальный аналитик. Использует накопленную в `quiz_history` прослеживаемость (traceability) — оценки, обоснования судей и пояснения — для создания персонализированного отчета об успеваемости.
+
+**Ключевые поля состояния (QuizState):**
+*   `quiz_history`: Список всех событий квиза с детальным обоснованием каждой оценки.
+*   `last_evaluation`: Метаданные последней проверки для узла Explainer.
+*   `interaction_mode`: Глобальный переключатель контекста (Чат vs Ответ на тест).
 
 ### 2.4 Algo Subgraph (Алгоритмы)
 

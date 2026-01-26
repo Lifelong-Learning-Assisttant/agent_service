@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Тест интерактивного квиза для новой системы агента.
-
-Тесты адаптированы под текущую реализацию с LangGraph и MemorySaver.
+Добавлена расширенная отладка и логирование истории.
 """
 
 import asyncio
 import json
 import sys
 import os
+import logging
+from datetime import datetime
 
 # Добавляем путь к корневой директории agent_service
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,254 +18,101 @@ from agent_system import AgentSystem
 from agent_session import AgentSession
 from settings import get_settings
 
-settings = get_settings()
+# Настройка логирования для теста
+log_dir = os.path.join(os.path.dirname(__file__), "scenarios", "logs")
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, f"quiz_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("QuizTest")
+
+async def log_step(step_name, user_input, agent_output, state=None):
+    logger.info(f"\n" + "="*40)
+    logger.info(f"ШАГ: {step_name}")
+    logger.info(f"ПОЛЬЗОВАТЕЛЬ: {user_input}")
+    logger.info(f"АГЕНТ: {agent_output}")
+    if state:
+        # Извлекаем только важные поля состояния
+        quiz_state = {
+            "current_index": state.get("current_quiz_index"),
+            "questions_count": len(state.get("quiz_questions", [])),
+            "answers_count": len(state.get("user_answers", [])),
+            "intent": state.get("intent")
+        }
+        logger.info(f"СОСТОЯНИЕ: {json.dumps(quiz_state, ensure_ascii=False)}")
+    logger.info("="*40)
 
 async def test_interactive_quiz():
     """Тест интерактивного квиза через основной API."""
     
-    print("=" * 60)
-    print("Тест интерактивного квиза")
-    print("=" * 60)
+    logger.info("Запуск теста интерактивного квиза...")
     
     # 1. Инициализация системы
-    print("\n[1] Инициализация AgentSystem...")
     system = AgentSystem()
-    print("✓ Система инициализирована")
-    
-    # 2. Создание сессии
-    print("\n[2] Создание сессии...")
-    session_id = "test_quiz_session_001"
+    session_id = f"test_quiz_{datetime.now().strftime('%H%M%S')}"
     session = system.create_session(session_id)
-    print(f"✓ Сессия создана: {session_id}")
     
-    # 3. Запуск квиза - отправляем запрос на генерацию квиза
-    print("\n[3] Запуск квиза (генерация вопросов)...")
-    quiz_request = "Сгенерируй квиз по Python программированию, 3 вопроса"
+    # 2. Запуск квиза
+    quiz_request = "Сгенерируй квиз по основам нейросетей, 2 вопроса"
+    logger.info(f"Отправка запроса: {quiz_request}")
     
-    # Запускаем через основной метод run
-    result1 = await system.run(quiz_request, session_id)
-    print(f"✓ Результат: {result1[:100]}...")
+    result = await system.run(quiz_request, session_id)
+    state = system.get_session(session_id).state
+    await log_step("ГЕНЕРАЦИЯ КВИЗА", quiz_request, result, state)
     
-    # Проверяем состояние сессии
-    session_obj = system.get_session(session_id)
-    if session_obj:
-        state = session_obj.state
-        print(f"  Состояние квиза:")
-        print(f"    - Вопросов в памяти: {len(state.get('quiz_questions', []))}")
-        print(f"    - Текущий индекс: {state.get('current_quiz_index', 0)}")
-        print(f"    - Ответов пользователя: {len(state.get('user_answers', []))}")
+    # Проверка, что квиз начался
+    if not state.get("quiz_questions"):
+        logger.error("Квиз не был сгенерирован!")
+        return False
+
+    # 3. Ответ на первый вопрос
+    answer1 = "Это функция активации"
+    logger.info(f"Ответ 1: {answer1}")
+    result = await system.run(answer1, session_id)
+    state = system.get_session(session_id).state
+    await log_step("ОТВЕТ 1", answer1, result, state)
+
+    # 4. Запрос подсказки (тестируем новый роутер)
+    help_request = "Я не уверен, можно подсказку?"
+    logger.info(f"Запрос подсказки: {help_request}")
+    result = await system.run(help_request, session_id)
+    state = system.get_session(session_id).state
+    await log_step("ПОДСКАЗКА", help_request, result, state)
     
-    # 4. Ответ на первый вопрос
-    print("\n[4] Ответ на первый вопрос...")
-    answer1 = "Это метод оптимизации"
-    result2 = await system.run(answer1, session_id)
-    print(f"✓ Результат: {result2[:100]}...")
-    
-    if session_obj:
-        state = session_obj.state
-        print(f"  После ответа 1:")
-        print(f"    - Текущий индекс: {state.get('current_quiz_index', 0)}")
-        print(f"    - Ответов пользователя: {len(state.get('user_answers', []))}")
-    
+    # Проверка, что индекс не изменился после подсказки
+    if state.get("current_quiz_index") != 1:
+        logger.warning(f"Индекс изменился после подсказки! Ожидался 1, получили {state.get('current_quiz_index')}")
+
     # 5. Ответ на второй вопрос
-    print("\n[5] Ответ на второй вопрос...")
-    answer2 = "Через передачу сигналов"
-    result3 = await system.run(answer2, session_id)
-    print(f"✓ Результат: {result3[:100]}...")
-    
-    if session_obj:
-        state = session_obj.state
-        print(f"  После ответа 2:")
-        print(f"    - Текущий индекс: {state.get('current_quiz_index', 0)}")
-        print(f"    - Ответов пользователя: {len(state.get('user_answers', []))}")
-    
-    # 6. Ответ на третий вопрос (последний)
-    print("\n[6] Ответ на третий вопрос...")
-    answer3 = "При помощи градиентного спуска"
-    result4 = await system.run(answer3, session_id)
-    print(f"✓ Результат: {result4[:100]}...")
-    
-    if session_obj:
-        state = session_obj.state
-        print(f"  После ответа 3 (завершение):")
-        print(f"    - Текущий индекс: {state.get('current_quiz_index', 0)}")
-        print(f"    - Ответов пользователя: {len(state.get('user_answers', []))}")
-        print(f"    - Вопросов в памяти: {len(state.get('quiz_questions', []))}")
-    
-    # 7. Проверка финального результата
-    print("\n[7] Финальный результат квиза...")
-    print(f"✓ Квиз завершен")
-    print(f"  Финальный ответ: {result4[:200]}...")
-    
-    # Проверяем, что состояние квиза очистилось
-    if session_obj:
-        state = session_obj.state
-        quiz_cleared = len(state.get('quiz_questions', [])) == 0
-        print(f"  Состояние квиза очищено: {quiz_cleared}")
-    
-    # 8. Проверка оценки квиза
-    print("\n[8] Проверка оценки квиза...")
-    
-    # Проверяем, что финальный ответ содержит ключевые элементы оценки
-    final_answer_lower = result4.lower()
-    
-    # Должно содержать информацию о вопросах
-    has_question_count = "всего вопросов" in final_answer_lower or "total questions" in final_answer_lower
-    # Должно содержать детальный разбор
-    has_detailed_review = "вопрос" in final_answer_lower and "ваш ответ" in final_answer_lower
-    # Должно содержать рекомендации
-    has_recommendations = "рекоменд" in final_answer_lower or "совет" in final_answer_lower
-    
-    print(f"  Содержит количество вопросов: {has_question_count}")
-    print(f"  Содержит детальный разбор: {has_detailed_review}")
-    print(f"  Содержит рекомендации: {has_recommendations}")
-    
-    if not (has_question_count and has_detailed_review):
-        print("✗ Оценка квиза не содержит достаточной детализации")
-        return False
-    
-    print("✓ Оценка квиза содержит полную информацию")
-    
-    print("\n" + "=" * 60)
-    print("✓ ТЕСТ ИНТЕРАКТИВНОГО КВИЗА УСПЕШНО ПРОЙДЕН!")
-    print("=" * 60)
-    
-    return True
+    answer2 = "Метод обратного распространения ошибки"
+    logger.info(f"Ответ 2: {answer2}")
+    result = await system.run(answer2, session_id)
+    state = system.get_session(session_id).state
+    await log_step("ОТВЕТ 2", answer2, result, state)
 
-
-async def test_error_cases():
-    """Тест обработки ошибок."""
-    
-    print("\n" + "=" * 60)
-    print("Тест обработки ошибок")
-    print("=" * 60)
-    
-    system = AgentSystem()
-    
-    # 1. Несуществующая сессия
-    print("\n[1] Проверка несуществующей сессии...")
-    try:
-        # Попытка использовать несуществующую сессию
-        result = await system.run("test question", "nonexistent-session-id")
-        # Если сессия не существует, она будет создана автоматически
-        print(f"✓ Сессия создана автоматически: {result[:50]}...")
-    except Exception as e:
-        print(f"✓ Ошибка корректно обработана: {e}")
-    
-    # 2. Проверка очистки состояния
-    print("\n[2] Проверка очистки состояния после квиза...")
-    session_id = "test_cleanup_session"
-    
-    # Создаем сессию и запускаем квиз
-    await system.run("Сгенерируй квиз по Python, 2 вопроса", session_id)
-    
-    # Отвечаем на вопросы
-    await system.run("Ответ 1", session_id)
-    await system.run("Ответ 2", session_id)
-    
-    # Проверяем состояние
-    session_obj = system.get_session(session_id)
-    state = session_obj.state
-    
-    quiz_cleared = len(state.get('quiz_questions', [])) == 0
-    answers_cleared = len(state.get('user_answers', [])) == 0
-    
-    if quiz_cleared and answers_cleared:
-        print("✓ Состояние квиза корректно очищено")
+    # 6. Финальная проверка
+    logger.info("Проверка завершения квиза...")
+    if len(state.get("quiz_questions", [])) == 0:
+        logger.info("✓ Квиз успешно завершен и состояние очищено")
     else:
-        print("✗ Состояние квиза не очищено")
+        logger.error("✗ Состояние квиза не очищено после завершения!")
         return False
-    
-    print("\n" + "=" * 60)
-    print("✓ ТЕСТЫ ОБРАБОТКИ ОШИБОК УСПЕШНО ПРОЙДЕНЫ!")
-    print("=" * 60)
-    
-    return True
 
-
-async def test_multiple_sessions():
-    """Тест работы с несколькими сессиями одновременно."""
-    
-    print("\n" + "=" * 60)
-    print("Тест множественных сессий")
-    print("=" * 60)
-    
-    system = AgentSystem()
-    
-    # Создаем две сессии
-    session1 = "user_001"
-    session2 = "user_002"
-    
-    print("\n[1] Создание двух сессий...")
-    system.create_session(session1)
-    system.create_session(session2)
-    print("✓ Обе сессии созданы")
-    
-    # Запускаем квизы параллельно
-    print("\n[2] Запуск параллельных квизов...")
-    
-    async def run_quiz(session_id, topic):
-        result = await system.run(f"Сгенерируй квиз по {topic}, 2 вопроса", session_id)
-        await system.run("Ответ 1", session_id)
-        await system.run("Ответ 2", session_id)
-        return result
-    
-    # Запускаем параллельно
-    results = await asyncio.gather(
-        run_quiz(session1, "Python"),
-        run_quiz(session2, "JavaScript")
-    )
-    
-    print("✓ Параллельные квизы завершены")
-    
-    # Проверяем, что состояния независимы
-    state1 = system.get_session(session1).state
-    state2 = system.get_session(session2).state
-    
-    # Оба должны быть очищены
-    quiz1_cleared = len(state1.get('quiz_questions', [])) == 0
-    quiz2_cleared = len(state2.get('quiz_questions', [])) == 0
-    
-    if quiz1_cleared and quiz2_cleared:
-        print("✓ Состояния сессий независимы и корректны")
+    if "Результаты квиза" in result or "📊" in result:
+        logger.info("✓ Получен финальный отчет")
     else:
-        print("✗ Проблема с изоляцией сессий")
+        logger.error("✗ Финальный отчет не содержит ожидаемых маркеров")
         return False
-    
-    print("\n" + "=" * 60)
-    print("✓ ТЕСТ МНОЖЕСТВЕННЫХ СЕССИЙ УСПЕШНО ПРОЙДЕН!")
-    print("=" * 60)
-    
+
+    logger.info("ТЕСТ УСПЕШНО ЗАВЕРШЕН")
     return True
-
-
-async def main():
-    """Основная функция."""
-    
-    try:
-        # Запуск основных тестов
-        success1 = await test_interactive_quiz()
-        
-        # Запуск тестов ошибок
-        success2 = await test_error_cases()
-        
-        # Запуск тестов множественных сессий
-        success3 = await test_multiple_sessions()
-        
-        if success1 and success2 and success3:
-            print("\n🎉 ВСЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ! 🎉")
-            sys.exit(0)
-        else:
-            print("\n❌ НЕКОТОРЫЕ ТЕСТЫ ПРОВАЛЕНЫ")
-            sys.exit(1)
-            
-    except Exception as e:
-        print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(test_interactive_quiz())

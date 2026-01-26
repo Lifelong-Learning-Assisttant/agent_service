@@ -6,33 +6,39 @@
 ## Задачи
 
 ### 1. Реализация узлов (Nodes)
-- [ ] **Supervisor Node**:
+- [x] **Supervisor Node**:
     - Главный мозг системы.
     - Определяет глобальный интент: `quiz`, `algo`, `chat`, `search`.
     - Управляет передачей управления (Handoff) в подграфы.
-- [ ] **Profile Update Node**:
+- [x] **Profile Update Node**:
     - Анализирует результаты работы подграфов (например, результаты квиза).
     - Обновляет долгосрочный профиль пользователя (компетенции).
+- [x] **Algo Placeholder Node**:
+    - Заглушка для режима AlgoLab (в процессе разработки).
 
 ### 2. Сборка главного графа
-- [ ] Импортировать скомпилированные графы: `retrieval_graph`, `chat_graph`, `quiz_graph`, `algo_graph`.
-- [ ] Определить `GlobalState`.
-- [ ] Настроить маршрутизацию:
+- [x] Импортировать скомпилированные графы: `retrieval_graph`, `chat_graph`, `quiz_graph`.
+- [x] Определить `GlobalState` (используется `AgentState` из `state.py`).
+- [x] Настроить маршрутизацию:
     - `Supervisor` -> `Quiz Graph`
-    - `Supervisor` -> `Algo Graph`
+    - `Supervisor` -> `Algo Placeholder`
     - `Supervisor` -> `Chat Graph` (включает в себя retrieval)
-- [ ] Настроить возврат управления (Command.PARENT).
+    - `Supervisor` -> `Retrieval Graph` (прямой поиск)
+- [x] Настроить возврат управления (через структуру графа и `END`).
 
 ### 3. Интеграция в AgentSystem
-- [ ] Обновить `agent_service/agent_system.py` для использования новой архитектуры.
-- [ ] Обеспечить обратную совместимость API (`run`, `run_async`).
+- [x] Обновить `agent_service/agent_system.py` для использования новой архитектуры.
+- [x] Обеспечить обратную совместимость API (`run`, `run_async`).
+- [x] Удалена старая монолитная логика `_build_graph`.
 
 ### 4. Тестирование
-- [ ] Создать тест сценария: `agent_service/tests/scenarios/test_supervisor_flow.py`.
-- [ ] Проверить сложные сценарии:
-    - Начало чата -> Переход в квиз -> Возврат в чат.
-    - Переключение между темами.
-    - Сохранение состояния при перезапуске (Checkpointer).
+- [x] Создать тест сценария: `agent_service/tests/scenarios/test_supervisor_flow.py`.
+- [x] Обновить комплексные тесты квиза: `agent_service/tests/scenarios/test_quiz_graph_comprehensive.py`.
+- [x] Проверить сложные сценарии:
+    - Маршрутизация по слэш-командам и интентам.
+    - Переход в квиз и обратно.
+    - Заглушка AlgoLab.
+    - Прохождение всех тестов в Docker-контейнере.
 
 ## Ожидаемый результат
 Полностью функционирующий агент версии 3.0 с модульной архитектурой.

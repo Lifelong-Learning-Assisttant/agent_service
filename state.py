@@ -17,6 +17,7 @@ class AgentState(TypedDict, total=False):
     quiz_questions: List[Dict[str, str]]  # Список {"question": "...", "answer": "..."}
     current_quiz_index: int               # Индекс текущего вопроса
     user_answers: List[str]               # Ответы пользователя
+    quiz_history: List[Dict[str, Any]]    # История оценки каждого вопроса {index, is_correct, score, reasoning, explanation}
     
     final_answer: str
     thought: str                          # Рассуждения модели (reasoning)

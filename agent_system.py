@@ -8,7 +8,7 @@ from collections import deque
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 
@@ -17,6 +17,7 @@ from settings import get_settings
 from logger import get_logger
 from langchain_tools import make_async_tools, generate_exam_async, grade_exam_async, get_algo_problem_info, get_algo_solution
 from retrieval_langchain_tools import rag_search_async, rag_generate_async
+from graphs.supervisor import supervisor_graph
 from agent_session import AgentSession
 
 
@@ -92,7 +93,7 @@ class AgentSystem:
         self._sweeper_task: Optional[asyncio.Task] = None
         self._sweeper_started = False
 
-        self.app = self._build_graph()
+        self.app = supervisor_graph
 
     # ---------- Управление сессиями ----------
     def create_session(self, session_id: str) -> AgentSession:
@@ -914,14 +915,24 @@ class AgentSystem:
                                 # Для multiple_choice объединяем все правильные варианты
                                 correct_answers = [options[i] for i in correct_indices if i < len(options)]
                                 correct_text = "; ".join(correct_answers)
-                                result.append({"q": stem, "a": correct_text})
+                                result.append({
+                                    "q": stem,
+                                    "a": correct_text,
+                                    "options": options,
+                                    "correct_indices": correct_indices,
+                                    "type": question_type
+                                })
                             else:
                                 # Если нет вариантов, просто сохраняем вопрос
                                 result.append({"q": stem, "a": "См. материал"})
                         elif stem and question_type == "open_ended":
                             # Для open-ended берем reference_answer
                             ref_answer = q.get("reference_answer", "См. материал")
-                            result.append({"q": stem, "a": ref_answer})
+                            result.append({
+                                "q": stem,
+                                "a": ref_answer,
+                                "type": "open_ended"
+                            })
                 
                 if result:
                     return result
@@ -1051,79 +1062,6 @@ class AgentSystem:
             # мы безопасно откатываемся к 'general', чтобы не ломать флоу пользователя.
             return "general"
 
-    # ---------- Сборка графа ----------
-    def _build_graph(self):
-        """
-        Собирает и компилирует граф.
-        """
-        self.log.debug("build_graph: begin")
-        builder = StateGraph(AgentState)
-        
-        def wrap_node(node_func):
-            async def wrapped_node(state: AgentState, config: Optional[Dict] = None):
-                session = None
-                if config and "configurable" in config:
-                    session = config["configurable"].get("session")
-                return await node_func(state, session)
-            return wrapped_node
-        
-        builder.add_node("planner", wrap_node(self.planner_node))
-        builder.add_node("retrieve", wrap_node(self.retrieve_node))
-        builder.add_node("prepare_material", wrap_node(self.prepare_material_node))
-        builder.add_node("direct_answer", wrap_node(self.direct_answer_node))
-        builder.add_node("rag_answer", wrap_node(self.rag_answer_node))
-        builder.add_node("create_quiz", wrap_node(self.create_quiz_node))
-        builder.add_node("process_answer", wrap_node(self.process_quiz_answer_node))
-        builder.add_node("evaluate_quiz", wrap_node(self.evaluate_quiz_node))
-        builder.add_node("algo_interviewer", wrap_node(self.algo_interviewer_node))
-
-        builder.add_edge(START, "planner")
-        
-        # 1. После Planner: либо прямой ответ, либо поиск, либо обработка квиза
-        builder.add_conditional_edges(
-            "planner",
-            self.route_after_planner,
-            {
-                "direct_answer": "direct_answer",
-                "retrieve": "retrieve",
-                "process_answer": "process_answer",
-                "evaluate_quiz": "evaluate_quiz",
-                "algo_interviewer": "algo_interviewer"
-            }
-        )
-        
-        # 2. После поиска ВСЕГДА идем на подготовку материала (Golden Source)
-        builder.add_edge("retrieve", "prepare_material")
-
-        # 3. После подготовки решаем: дать ответ или создать квиз
-        builder.add_conditional_edges(
-            "prepare_material",
-            self.route_after_retriever,
-            {
-                "rag_answer": "rag_answer",
-                "create_quiz": "create_quiz"
-            }
-        )
-        
-        # 4. Процесс квиза
-        builder.add_conditional_edges(
-            "process_answer",
-            lambda s: "evaluate_quiz" if s.get("intent") == "evaluate_quiz" else END,
-            {
-                "evaluate_quiz": "evaluate_quiz",
-                END: END
-            }
-        )
-
-        builder.add_edge("direct_answer", END)
-        builder.add_edge("rag_answer", END)
-        builder.add_edge("create_quiz", END)
-        builder.add_edge("evaluate_quiz", END)
-        builder.add_edge("algo_interviewer", END)
-
-        app = builder.compile(checkpointer=self.memory)
-        self.log.debug("build_graph: done")
-        return app
 
     # ---------- Публичный вызов ----------
     async def run(self, question: str, session_id: str = "default", settings: Optional[Any] = None, interaction_mode: Optional[str] = None) -> str:
