@@ -1,10 +1,10 @@
 # agent_service/langchain_tools.py
 """
-Асинхронные инструменты LangChain для работы с MCP серверами.
+Асинхронные инструменты LangChain для работы с внешними сервисами (RAG, Tavily, Context7).
 Использует httpx.AsyncClient для не блокирующих HTTP-запросов.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import httpx
 import json
@@ -14,20 +14,37 @@ from langchain.tools import Tool, tool
 from settings import get_settings
 
 log = logging.getLogger(__name__)
-# settings = get_settings() # Удаляем глобальную инициализацию
+
+# Маппинг популярных библиотек для мгновенного резолвинга
+ML_LIBRARIES_MAP = {
+    "pytorch": "/pytorch/pytorch",
+    "torch": "/pytorch/pytorch",
+    "scikit-learn": "/scikit-learn/scikit-learn",
+    "sklearn": "/scikit-learn/scikit-learn",
+    "pandas": "/pandas-dev/pandas",
+    "numpy": "/numpy/numpy",
+    "matplotlib": "/matplotlib/matplotlib",
+    "seaborn": "/mwaskom/seaborn",
+    "tensorflow": "/tensorflow/tensorflow",
+    "keras": "/keras-team/keras",
+    "transformers": "/huggingface/transformers",
+    "hf": "/huggingface/transformers",
+    "diffusers": "/huggingface/diffusers",
+    "datasets": "/huggingface/datasets",
+    "langchain": "/langchain-ai/langchain",
+    "langgraph": "/langchain-ai/langgraph",
+    "fastapi": "/tiangolo/fastapi",
+    "pydantic": "/pydantic/pydantic",
+    "polars": "/pola-rs/polars",
+    "xgboost": "/dmlc/xgboost",
+    "lightgbm": "/microsoft/lightgbm",
+    "catboost": "/catboost/catboost"
+}
 
 
 async def rag_search_async(query: str, top_k: int = 5, use_hyde: bool = False) -> str:
     """
     Асинхронно выполняет поиск документов через RAG сервис.
-    
-    Args:
-        query: Поисковый запрос
-        top_k: Количество результатов (по умолчанию 5)
-        use_hyde: Использовать HyDE для улучшения поиска (по умолчанию False)
-        
-    Returns:
-        Результаты поиска в формате JSON
     """
     settings = get_settings()
     rag_service_url = settings.rag_service_url
@@ -48,65 +65,134 @@ async def rag_search_async(query: str, top_k: int = 5, use_hyde: bool = False) -
             response.raise_for_status()
             result = response.json()
             return json.dumps(result, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        log.error(f"HTTP error in rag_search_async: {e}")
-        return json.dumps({"error": f"HTTP {e.response.status_code}: {str(e)}"}, ensure_ascii=False)
     except Exception as e:
         log.error(f"RAG search async service call failed: {e}")
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
-async def rag_generate_async(query: str, top_k: int = 5, temperature: float = 0.7, use_hyde: bool = False) -> str:
+async def tavily_search_async(query: str, max_results: int = 5) -> str:
     """
-    Асинхронно генерирует ответ на вопрос через RAG сервис.
-    
-    Args:
-        query: Вопрос пользователя
-        top_k: Количество документов для контекста (по умолчанию 5)
-        temperature: Температура генерации (по умолчанию 0.7)
-        use_hyde: Использовать HyDE для улучшения поиска (по умолчанию False)
-        
-    Returns:
-        Сгенерированный ответ в формате JSON
+    Асинхронно выполняет поиск в интернете через Tavily API.
     """
     settings = get_settings()
-    rag_service_url = settings.rag_service_url
-    if not rag_service_url:
-        log.warning("RAG service not configured")
-        return json.dumps({"error": "RAG service not configured"})
+    tavily_api_key = settings.tavily_api_key
     
+    if not tavily_api_key:
+        log.warning("Tavily API key not found in settings")
+        return json.dumps({"results": []})
+
     try:
         payload = {
+            "api_key": tavily_api_key.get_secret_value(),
             "query": query,
-            "top_k": top_k,
-            "temperature": temperature,
-            "use_hyde": use_hyde
+            "search_depth": "basic",
+            "max_results": max_results
         }
-        log.info(f"Async calling RAG generate service at {rag_service_url}/rag with payload: {payload}")
-        
         async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
-            response = await client.post(f"{rag_service_url}/rag", json=payload)
+            response = await client.post("https://api.tavily.com/search", json=payload)
+            response.raise_for_status()
+            return json.dumps(response.json(), ensure_ascii=False)
+    except Exception as e:
+        log.error(f"Tavily search failed: {e}")
+        return json.dumps({"results": [], "error": str(e)}, ensure_ascii=False)
+
+
+async def resolve_library_id_async(library_name: str, query: str = "") -> Optional[str]:
+    """
+    Асинхронно разрешает название библиотеки в Context7 ID (API v2).
+    """
+    if not library_name:
+        return None
+        
+    name_clean = library_name.lower().strip()
+    
+    # 1. Проверяем хардкод (ML_LIBRARIES_MAP)
+    if name_clean in ML_LIBRARIES_MAP:
+        log.info(f"Library {library_name} resolved via map: {ML_LIBRARIES_MAP[name_clean]}")
+        return ML_LIBRARIES_MAP[name_clean]
+        
+    # 2. Пробуем через API Context7 v2
+    settings = get_settings()
+    context7_api_key = settings.context7_api_key
+    if not context7_api_key:
+        return None
+        
+    try:
+        # Эндпоинт v2 для поиска библиотек
+        url = "https://context7.com/api/v2/libs/search"
+        headers = {"Authorization": f"Bearer {context7_api_key.get_secret_value()}"}
+        params = {"libraryName": library_name, "query": query}
+        
+        log.info(f"Resolving library {library_name} via Context7 v2 API")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            results = data.get("results", [])
+            if isinstance(results, list) and len(results) > 0:
+                return results[0].get("id")
+    except Exception as e:
+        log.error(f"Failed to resolve library {library_name}: {e}")
+        
+    return None
+
+
+async def context7_docs_async(query: str, library_id: str) -> str:
+    """
+    Асинхронно запрашивает документацию через Context7 (API v2).
+    """
+    settings = get_settings()
+    context7_api_key = settings.context7_api_key
+    
+    if not context7_api_key:
+        log.warning("Context7 API key not found in settings")
+        return json.dumps([])
+
+    try:
+        # Используем API v2 /context эндпоинт (GET)
+        url = "https://context7.com/api/v2/context"
+        headers = {"Authorization": f"Bearer {context7_api_key.get_secret_value()}"}
+        params = {
+            "libraryId": library_id,
+            "query": query,
+            "type": "json" # Запрашиваем структурированный JSON
+        }
+        
+        log.info(f"Async calling Context7 v2 (GET) at {url} for library {library_id}")
+        async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
+            response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
             result = response.json()
-            return json.dumps(result, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        log.error(f"HTTP error in rag_generate_async: {e}")
-        return json.dumps({"error": f"HTTP {e.response.status_code}: {str(e)}"}, ensure_ascii=False)
+            
+            docs = []
+            # Обработка информационных сниппетов
+            for info in result.get("infoSnippets", []):
+                docs.append({
+                    "content": f"### {info.get('breadcrumb', '')}\n{info.get('content', '')}",
+                    "url": f"https://context7.com{library_id}/{info.get('pageId', '')}"
+                })
+            
+            # Обработка сниппетов кода
+            for code_item in result.get("codeSnippets", []):
+                code_content = ""
+                for c in code_item.get("codeList", []):
+                    code_content += f"```{c.get('language', 'python')}\n{c.get('code', '')}\n```\n"
+                
+                docs.append({
+                    "content": f"### {code_item.get('codeTitle', '')}\n{code_item.get('codeDescription', '')}\n{code_content}",
+                    "url": f"https://context7.com{library_id}/{code_item.get('codeId', '')}"
+                })
+            
+            return json.dumps(docs, ensure_ascii=False)
     except Exception as e:
-        log.error(f"RAG generate async service call failed: {e}")
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        log.error(f"Context7 search failed: {e}")
+        return json.dumps([], ensure_ascii=False)
 
 
 async def generate_exam_async(markdown_content: str, config: Dict[str, Any] = None) -> str:
     """
     Асинхронно генерирует экзамен через сервис test_generator.
-    
-    Args:
-        markdown_content: Содержимое Markdown для генерации вопросов
-        config: Конфигурация для генерации экзамена
-        
-    Returns:
-        Сгенерированный экзамен в формате JSON
     """
     settings = get_settings()
     test_generator_service_url = settings.test_generator_service_url
@@ -119,135 +205,71 @@ async def generate_exam_async(markdown_content: str, config: Dict[str, Any] = No
             "markdown_content": markdown_content,
             "config": config
         }
-        log.info(f"Async calling test generator service at {test_generator_service_url}/api/generate with payload: {payload}")
-        
         async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
             response = await client.post(f"{test_generator_service_url}/api/generate", json=payload)
             response.raise_for_status()
-            result = response.json()
-            return json.dumps(result, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        log.error(f"HTTP error in generate_exam_async: {e}")
-        return json.dumps({"error": f"HTTP {e.response.status_code}: {str(e)}"}, ensure_ascii=False)
+            return json.dumps(response.json(), ensure_ascii=False)
     except Exception as e:
-        log.error(f"Test generator async service call failed: {e}")
+        log.error(f"Test generator failed: {e}")
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 async def grade_exam_async(exam_id: str, answers: List[Dict[str, Any]]) -> str:
     """
-    Асинхронно оценивает ответы на экзамен через сервис test_generator.
-    
-    Args:
-        exam_id: Идентификатор экзамена
-        answers: Список ответов студента
-        
-    Returns:
-        Результаты оценки в формате JSON
+    Асинхронно оценивает ответы на экзамен.
     """
     settings = get_settings()
     test_generator_service_url = settings.test_generator_service_url
     if not test_generator_service_url:
-        log.warning("Test generator service not configured")
         return json.dumps({"error": "Test generator service not configured"})
     
     try:
-        payload = {
-            "exam_id": exam_id,
-            "answers": answers
-        }
-        log.info(f"Async calling test generator grade service at {test_generator_service_url}/api/grade with payload: {payload}")
-        
+        payload = {"exam_id": exam_id, "answers": answers}
         async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
             response = await client.post(f"{test_generator_service_url}/api/grade", json=payload)
             response.raise_for_status()
-            result = response.json()
-            return json.dumps(result, ensure_ascii=False)
-    except httpx.HTTPStatusError as e:
-        log.error(f"HTTP error in grade_exam_async: {e}")
-        return json.dumps({"error": f"HTTP {e.response.status_code}: {str(e)}"}, ensure_ascii=False)
+            return json.dumps(response.json(), ensure_ascii=False)
     except Exception as e:
-        log.error(f"Test generator grade async service call failed: {e}")
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 @tool
 async def get_algo_problem_info(problem_id: str) -> str:
-    """
-    Возвращает мета-информацию об алгоритмической задаче, включая описание (для пользователя)
-    и скрытые заметки для интервьюера (только для агента).
-    Используй это, чтобы давать советы студенту.
-    """
-    # Внутри контейнера путь может отличаться, используем путь относительно /app
-    base_path = f"/app/../data/algo_problems/{problem_id}"
+    """Возвращает информацию о задаче."""
+    base_path = f"../data/algo_problems/{problem_id}"
     try:
         info = {"problem_id": problem_id}
-        
-        task_path = os.path.join(base_path, "task.md")
-        if os.path.exists(task_path):
-            async with aiofiles.open(task_path, mode='r', encoding='utf-8') as f:
-                info["task_description"] = await f.read()
-        
-        note_path = os.path.join(base_path, "interviewer_note.md")
-        if os.path.exists(note_path):
-            async with aiofiles.open(note_path, mode='r', encoding='utf-8') as f:
-                info["interviewer_notes"] = await f.read()
-                
+        for filename, key in [("task.md", "task_description"), ("interviewer_note.md", "interviewer_notes")]:
+            path = os.path.join(os.path.dirname(__file__), base_path, filename)
+            if os.path.exists(path):
+                async with aiofiles.open(path, mode='r', encoding='utf-8') as f:
+                    info[key] = await f.read()
         return json.dumps(info, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+
 @tool
 async def get_algo_solution(problem_id: str) -> str:
-    """
-    Возвращает эталонное решение задачи. НЕ ПОКАЗЫВАЙ ЕГО ПОЛЬЗОВАТЕЛЮ напрямую.
-    Используй его только для анализа кода пользователя и подсказок.
-    """
-    path = f"/app/../data/algo_problems/{problem_id}/hidden_solution.py"
+    """Возвращает эталонное решение."""
+    path = os.path.join(os.path.dirname(__file__), f"../data/algo_problems/{problem_id}/hidden_solution.py")
     try:
         if os.path.exists(path):
             async with aiofiles.open(path, mode='r', encoding='utf-8') as f:
-                content = await f.read()
-                return json.dumps({"solution": content}, ensure_ascii=False)
+                return json.dumps({"solution": await f.read()}, ensure_ascii=False)
         return json.dumps({"error": "Solution not found"})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+
 def make_async_tools() -> List[Tool]:
-    """
-    Создает список асинхронных инструментов LangChain для использования в агентах.
-    Инструменты используют async-функции для не блокирующих вызовов.
-    """
-    tools = [
-        Tool(
-            name="rag_search",
-            func=rag_search_async,
-            description="Асинхронный поиск документов через RAG сервис. Вход: query, top_k, use_hyde. Возвращает результаты поиска в JSON."
-        ),
-        Tool(
-            name="rag_generate",
-            func=rag_generate_async,
-            description="Асинхронная генерация ответа через RAG сервис. Вход: query, top_k, temperature, use_hyde. Возвращает сгенерированный ответ в JSON."
-        ),
-        Tool(
-            name="generate_exam",
-            func=generate_exam_async,
-            description="Асинхронная генерация экзамена из Markdown контента. Вход: markdown_content, config. Возвращает экзамен в JSON."
-        ),
-        Tool(
-            name="grade_exam",
-            func=grade_exam_async,
-            description="Асинхронная оценка ответов на экзамен. Вход: exam_id, answers. Возвращает результаты оценки в JSON."
-        ),
-        Tool(
-            name="get_algo_problem_info",
-            func=get_algo_problem_info,
-            description="Получить информацию о задаче и заметки интервьюера. Вход: problem_id."
-        ),
-        Tool(
-            name="get_algo_solution",
-            func=get_algo_solution,
-            description="Получить эталонное решение задачи (скрыто от пользователя). Вход: problem_id."
-        ),
+    """Создает список инструментов."""
+    return [
+        Tool(name="rag_search", func=rag_search_async, description="Поиск в RAG."),
+        Tool(name="tavily_search", func=tavily_search_async, description="Поиск в Web."),
+        Tool(name="context7_docs", func=context7_docs_async, description="Поиск в документации."),
+        Tool(name="generate_exam", func=generate_exam_async, description="Генерация экзамена."),
+        Tool(name="grade_exam", func=grade_exam_async, description="Оценка экзамена."),
+        Tool(name="get_algo_problem_info", func=get_algo_problem_info, description="Инфо о задаче."),
+        Tool(name="get_algo_solution", func=get_algo_solution, description="Решение задачи."),
     ]
-    return tools
