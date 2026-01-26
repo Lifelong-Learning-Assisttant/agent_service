@@ -303,7 +303,10 @@ class LLMClient:
                 params.update(base_url=base_url)
                 self.log.debug("create_embeddings: Z.ai, model=%s, base=%s", m, base_url)
             else:
-                self.log.debug("create_embeddings: OpenAI, model=%s", m)
+                base_url = getattr(self.cfg, "openai_base_url", None)
+                self.log.debug("create_embeddings: OpenAI, model=%s, base=%s", m, base_url)
+                if base_url:
+                    params.update(base_url=base_url)
             return OpenAIEmbeddings(**params)
 
         if p == "mistral":

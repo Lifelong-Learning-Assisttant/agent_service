@@ -43,7 +43,7 @@ class LLMSettings(BaseSettings):
     # ---- OpenAI ----
     openai_chat_model: str = Field(default="gpt-4o-mini")
     openai_emb_model: str = Field(default="text-embedding-3-small")
-    openai_base_url: str | None = Field(default=None)
+    openai_base_url: str | None = Field(default="https://api.ai-mediator.ru/v1", validation_alias="OPENAI_API_BASE")
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
 
     # ---- OpenRouter ----
