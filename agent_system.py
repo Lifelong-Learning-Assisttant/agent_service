@@ -15,7 +15,8 @@ from langchain_core.prompts import PromptTemplate
 from llm_service.llm_client import LLMClient
 from settings import get_settings
 from logger import get_logger
-from langchain_tools import make_async_tools, rag_search_async, rag_generate_async, generate_exam_async, grade_exam_async, get_algo_problem_info, get_algo_solution
+from langchain_tools import make_async_tools, generate_exam_async, grade_exam_async, get_algo_problem_info, get_algo_solution
+from retrieval_langchain_tools import rag_search_async, rag_generate_async
 from agent_session import AgentSession
 
 

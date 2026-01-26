@@ -57,6 +57,31 @@ async def rag_search_async(query: str, top_k: int = 5, use_hyde: bool = False) -
         log.error(f"RAG search failed: {e}")
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
+async def rag_generate_async(query: str, top_k: int = 5, temperature: float = 0.7, use_hyde: bool = False) -> str:
+    """Асинхронно генерирует ответ на вопрос через RAG сервис."""
+    settings = get_settings()
+    rag_service_url = settings.rag_service_url
+    if not rag_service_url:
+        log.warning("RAG service not configured")
+        return json.dumps({"error": "RAG service not configured"})
+    
+    try:
+        payload = {
+            "query": query,
+            "top_k": top_k,
+            "temperature": temperature,
+            "use_hyde": use_hyde
+        }
+        log.info(f"Async calling RAG generate service at {rag_service_url}/rag")
+        async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
+            response = await client.post(f"{rag_service_url}/rag", json=payload)
+            response.raise_for_status()
+            result = response.json()
+            return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        log.error(f"RAG generate failed: {e}")
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
 async def tavily_search_async(query: str, max_results: int = 5) -> str:
     """Асинхронно выполняет поиск в интернете через Tavily API."""
     settings = get_settings()
