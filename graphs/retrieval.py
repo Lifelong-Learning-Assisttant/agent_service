@@ -256,6 +256,14 @@ async def prepare_material_node(state: RetrievalState, config: Optional[Dict] = 
     material = res.content
     is_relevant = len(material) > 50 and "не нашел" not in material.lower()
 
+    if session:
+        await session.notify_ui(
+            step="retrieval_done",
+            message="Поиск завершен, материал подготовлен.",
+            tool="retrieval_aggregator",
+            meta={"docs_count": len(docs), "is_relevant": is_relevant}
+        )
+
     return {"prepared_material": material, "is_relevant": is_relevant}
 
 # --- Router Logic ---

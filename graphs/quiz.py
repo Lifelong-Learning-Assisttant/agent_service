@@ -108,10 +108,10 @@ async def quiz_router_node(state: AgentState, config: Optional[Dict] = None) -> 
     intent_map = {
         "answer": "quiz_answering",
         "skip": "skip_question",
-        "help": "quiz_answering",
+        "help": "rag_answer",     # Идем за подсказкой через retrieval
         "stop": "evaluate_quiz",
-        "search": "rag_answer",
-        "quiz": "generate_quiz"
+        "search": "offtopic",     # Оффтоп
+        "quiz": "offtopic"        # Запрос квиза внутри квиза -> оффтоп
     }
 
     if session:
@@ -129,10 +129,10 @@ async def mcq_judge_node(state: AgentState, config: Optional[Dict] = None) -> Di
     Validates MCQ answers (Single/Multiple Choice) algorithmically.
     """
     idx = state.get("current_quiz_index", 0)
-    questions = state.get("quiz_questions", [])
+    questions = state.get("quiz_questions") or []
     user_msg = (state.get("question") or "").strip()
     
-    if idx >= len(questions):
+    if not questions or idx >= len(questions):
         return {"intent": "evaluate_quiz"}
 
     current_q = questions[idx]
@@ -197,10 +197,10 @@ async def open_judge_node(state: AgentState, config: Optional[Dict] = None) -> D
         await session.notify_ui(step="open_judge", message="Оценка вашего ответа...", tool="interviewer")
 
     idx = state.get("current_quiz_index", 0)
-    questions = state.get("quiz_questions", [])
+    questions = state.get("quiz_questions") or []
     user_msg = state.get("question", "")
     
-    if idx >= len(questions):
+    if not questions or idx >= len(questions):
         return {"intent": "evaluate_quiz"}
 
     current_q = questions[idx]
@@ -252,8 +252,11 @@ async def explainer_node(state: AgentState, config: Optional[Dict] = None) -> Di
     """
     eval_data = state.get("last_evaluation", {})
     idx = state.get("current_quiz_index", 0)
-    questions = state.get("quiz_questions", [])
+    questions = state.get("quiz_questions") or []
     
+    if not questions or idx >= len(questions):
+        return {"final_answer": state.get("final_answer", "")}
+
     current_q = questions[idx]
     
     # Если у нас уже есть explanation от судьи (в открытых вопросах), используем его.
@@ -288,11 +291,11 @@ async def interviewer_hint_node(state: AgentState, config: Optional[Dict] = None
         await session.notify_ui(step="interviewer_hint", message="Подготовка подсказки...", tool="interviewer")
     
     idx = state.get("current_quiz_index", 0)
-    questions = state.get("quiz_questions", [])
+    questions = state.get("quiz_questions") or []
     user_msg = state.get("question", "")
     material = state.get("prepared_material", "")
     
-    current_q = questions[idx]["q"] if idx < len(questions) else "N/A"
+    current_q = questions[idx]["q"] if (questions and idx < len(questions)) else "N/A"
     
     template = load_prompt("quiz_interviewer_hint.txt")
     prompt = template.format(
@@ -313,11 +316,11 @@ async def skip_node(state: AgentState, config: Optional[Dict] = None) -> Dict[st
     Marks the current question as skipped.
     """
     idx = state.get("current_quiz_index", 0)
-    questions = state.get("quiz_questions", [])
+    questions = state.get("quiz_questions") or []
     
     history_item = {
         "index": idx,
-        "question": questions[idx]["q"] if idx < len(questions) else "N/A",
+        "question": questions[idx]["q"] if (questions and idx < len(questions)) else "N/A",
         "user_input": "[SYSTEM: SKIPPED]",
         "is_correct": False,
         "score": 0.0,
@@ -330,15 +333,26 @@ async def skip_node(state: AgentState, config: Optional[Dict] = None) -> Dict[st
     
     return {"quiz_history": quiz_history, "final_answer": None}
 
+async def offtopic_node(state: AgentState, config: Optional[Dict] = None) -> Dict[str, Any]:
+    """
+    Handles off-topic queries during the quiz.
+    """
+    msg = (
+        "⚠️ **Мы сейчас проходим квиз.**\n\n"
+        "Пожалуйста, ответьте на текущий вопрос или используйте кнопку **Завершить** (`/finish_quizz`), "
+        "чтобы выйти в режим свободного общения."
+    )
+    return {"final_answer": msg}
+
 async def check_progress_node(state: AgentState, config: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Checks if there are more questions and returns the next one.
     """
     idx = state.get("current_quiz_index", 0)
-    questions = state.get("quiz_questions", [])
+    questions = state.get("quiz_questions") or []
     
     next_idx = idx + 1
-    finished = next_idx >= len(questions)
+    finished = not questions or next_idx >= len(questions)
     
     if finished:
         return {"intent": "evaluate_quiz"}
@@ -435,6 +449,8 @@ def route_quiz(state: AgentState) -> str:
         return "mentor"
     if intent == "rag_answer":
         return "search"
+    if intent == "offtopic":
+        return "offtopic"
     
     # Для quiz_answering выбираем тип судьи
     question = (state.get("question") or "").strip()
@@ -524,6 +540,7 @@ def build_quiz_graph():
     builder.add_node("check_progress", check_progress_node)
     builder.add_node("mentor", mentor_node)
     builder.add_node("retrieval", retrieval_graph)
+    builder.add_node("offtopic", offtopic_node)
     
     builder.add_edge(START, "quiz_router")
     
@@ -536,9 +553,12 @@ def build_quiz_graph():
             "skip": "skip",
             "mentor": "mentor",
             "search": "retrieval",
-            "generate_quiz": "generate_quiz"
+            "generate_quiz": "generate_quiz",
+            "offtopic": "offtopic"
         }
     )
+    
+    builder.add_edge("offtopic", END)
     
     builder.add_edge("mcq_judge", "explainer")
     builder.add_edge("open_judge", "explainer")

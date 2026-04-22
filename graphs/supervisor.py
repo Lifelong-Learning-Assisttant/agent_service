@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from state import AgentState
 from graphs.chat import chat_graph
 from graphs.quiz import quiz_graph
-from graphs.retrieval import retrieval_graph
+# from graphs.retrieval import retrieval_graph # Removed unused import
 from llm_service.llm_client import LLMClient
 from tools import generate_exam_async
 from settings import get_settings
@@ -129,8 +129,9 @@ def route_from_supervisor(state: AgentState) -> str:
         return "quiz"
     if intent == "algo" or intent == "algo_help":
         return "algo_placeholder"
+    # Search intent now routed to chat to ensure proper answer generation
     if intent == "search":
-        return "search"
+        return "chat"
     return "chat"
 
 # --- Graph Assembly ---
@@ -141,7 +142,7 @@ def build_supervisor_graph():
     builder.add_node("supervisor", supervisor_node)
     builder.add_node("quiz", quiz_graph)
     builder.add_node("chat", chat_graph)
-    builder.add_node("search", retrieval_graph)
+    # builder.add_node("search", retrieval_graph) # Removed: Search is handled by Chat
     builder.add_node("algo_placeholder", algo_placeholder_node)
     builder.add_node("profile_update", profile_update_node)
     
@@ -153,14 +154,14 @@ def build_supervisor_graph():
         {
             "quiz": "quiz",
             "chat": "chat",
-            "search": "search",
+            # "search": "search", # Removed
             "algo_placeholder": "algo_placeholder"
         }
     )
     
     builder.add_edge("quiz", "profile_update")
     builder.add_edge("chat", "profile_update")
-    builder.add_edge("search", "profile_update")
+    # builder.add_edge("search", "profile_update") # Removed
     builder.add_edge("algo_placeholder", "profile_update")
     
     builder.add_edge("profile_update", END)

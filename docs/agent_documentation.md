@@ -27,13 +27,11 @@ graph TD
     Supervisor --"Intent: Quiz"--> QuizHandoff[Prepare Quiz Data]
     Supervisor --"Intent: Algo"--> AlgoHandoff[Prepare Algo Data]
     Supervisor --"Intent: Chat"--> ChatHandoff[Prepare Chat Data]
-    Supervisor --"Intent: Search"--> GlobalSearch[Shared Retrieval Node]
+    Supervisor --"Intent: Search"--> ChatHandoff
     
     QuizHandoff --> QuizGraph[[Quiz Subgraph]]
     AlgoHandoff --> AlgoGraph[[Algo Subgraph]]
     ChatHandoff --> ChatGraph[[Chat Subgraph]]
-    
-    GlobalSearch --"RAG/Web/Docs"--> Supervisor
     
     QuizGraph --"Command: PARENT"--> Supervisor
     AlgoGraph --"Command: PARENT"--> Supervisor
@@ -72,6 +70,7 @@ graph TD
 ### 2.5 Shared Retrieval Subgraph (Поиск информации)
 
 Унифицированный подграф для сбора знаний из множества источников.
+Реализует паттерн **"Retrieval as a Function"** (см. LangGraph docs): принимает запрос и возвращает структурированный материал, оставляя формирование финального ответа вызывающему подграфу.
 
 ```mermaid
 graph TD
@@ -100,6 +99,18 @@ graph TD
 2.  **Aggregator**: Собирает сырые фрагменты (chunks) из всех выбранных источников.
 3.  **Prepare Material**: Узел-"редактор", который синтезирует связный учебный текст, исправляет формулы LaTeX и удаляет дубликаты.
 
+#### Интеграция с другими подграфами
+
+Retrieval Subgraph используется во всех режимах работы агента:
+
+*   **Chat Subgraph**:
+    *   Используется для поиска ответа на технические вопросы (`Intent: Search`).
+    *   `Retrieval` находит материал -> `Full Answer Node` формирует развернутый ответ пользователю.
+*   **Quiz Subgraph (Этапы)**:
+    1.  **Quiz Generator**: Поиск учебного материала по теме -> `Exam Generation` (создание вопросов на основе найденного).
+    2.  **Quiz Interviewer**: Поиск подсказки при затруднении (`Intent: Help`) -> `Hint Node` (наводящая подсказка, не раскрывающая ответ).
+    3.  **Quiz Mentor**: (Планируется) Поиск объяснения ошибок -> `Detailed Feedback` (разбор полетов с ссылками на источники).
+
 ### 2.3 Quiz Subgraph (Тестирование v3.5)
 
 Режим проведения квизов с гибридной оценкой и детерминированным роутингом.
@@ -111,7 +122,8 @@ graph TD
     Q_Router --"Regex: /answer"--> Q_MCQ[MCQ Judge: Code]
     Q_Router --"Mode: ANSWER_QUIZ"--> Q_Open[Open-ended Judge: LLM]
     Q_Router --"Intent: Skip"--> Q_Skip[Skip Node]
-    Q_Router --"Intent: Search"--> Q_Search[[Shared Retrieval Subgraph]]
+    Q_Router --"Intent: Help"--> Q_Search[[Shared Retrieval Subgraph]]
+    Q_Router --"Intent: Offtopic"--> Q_Offtopic[Offtopic Handler]
     
     Q_MCQ --> Q_Explain[Explainer Node]
     Q_Open --> Q_Explain
@@ -120,6 +132,7 @@ graph TD
     
     Q_Explain --> Q_Check{Check Progress}
     Q_Skip --> Q_Check
+    Q_Offtopic --> Q_End
     
     Q_Check --"More Questions"--> Q_End(End Step)
     Q_Check --"Finished / Stop"--> Q_Mentor[Mentor Role]
@@ -132,8 +145,9 @@ graph TD
 **Логика работы:**
 1.  **Deterministic Router**: Обеспечивает безошибочное разделение потоков данных.
     *   Ответы из интерфейса (`/answer [indices]`) и текстовые ответы в режиме `ANSWER_QUIZ` направляются напрямую к судьям.
-    *   Уточняющие вопросы в режиме `AI_SYNC` активируют поиск через `Shared Retrieval`.
+    *   Запрос подсказки (`help`) активирует поиск через `Shared Retrieval` -> `Interviewer Hint`.
     *   Слэш-команды (`/skip`, `/finish`) обрабатываются алгоритмически.
+    *   Оффтоп и запросы нового квиза внутри активного отклоняются `Offtopic Handler`.
 2.  **Hybrid Judges (Система оценки)**:
     *   **MCQ Judge**: Выполняет мгновенную программную проверку индексов (Single/Multiple Choice).
     *   **Open-ended Judge**: Реализует паттерн **LLM-as-a-Judge**, сравнивая семантику ответа пользователя с эталоном. Возвращает `score` (0-1) и `reasoning`.
